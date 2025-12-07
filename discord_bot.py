@@ -9,6 +9,7 @@ The bot's token should be in a file named 'token.txt' in the current working dir
 import os
 import asyncio
 import discord
+from datetime import datetime
 from react_agent import ReActAgent
 
 
@@ -56,9 +57,13 @@ class ReActDiscordBot:
                     await message.channel.send("Please ask me a question after mentioning me!")
                     return
                 
+                # Add current datetime to the query so the bot can consider current time
+                current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                question_with_time = f"[Current date and time: {current_time}] {question}"
+                
                 # Add a thinking emoji reaction to the original message
                 try:
-                    await message.add_reaction("🤔")
+                    await message.add_reaction("⏳")
                 except (discord.Forbidden, discord.NotFound, discord.HTTPException):
                     # If we can't add a reaction, continue anyway
                     pass
@@ -67,12 +72,12 @@ class ReActDiscordBot:
                     # Use the ReAct agent to answer the question (verbose=False to reduce log noise)
                     # Run in a thread pool to avoid blocking the Discord event loop and heartbeat
                     answer = await asyncio.to_thread(
-                        self.agent.run, question, max_iterations=5, verbose=False
+                        self.agent.run, question_with_time, max_iterations=5, verbose=False
                     )
                     
                     # Remove the thinking emoji reaction
                     try:
-                        await message.remove_reaction("🤔", self.client.user)
+                        await message.remove_reaction("⏳", self.client.user)
                     except (discord.Forbidden, discord.NotFound, discord.HTTPException):
                         # If we can't remove the reaction, continue anyway
                         pass
@@ -102,7 +107,7 @@ class ReActDiscordBot:
                 except Exception as e:
                     # Remove the thinking emoji reaction if there was an error
                     try:
-                        await message.remove_reaction("🤔", self.client.user)
+                        await message.remove_reaction("⏳", self.client.user)
                     except (discord.Forbidden, discord.NotFound, discord.HTTPException):
                         # If we can't remove the reaction, continue anyway
                         pass
