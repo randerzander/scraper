@@ -9,6 +9,8 @@ The bot's token should be in a file named 'token.txt' in the current working dir
 import os
 import asyncio
 import discord
+import requests
+import json
 from datetime import datetime
 from react_agent import ReActAgent
 
@@ -25,6 +27,7 @@ class ReActDiscordBot:
             api_key: OpenRouter API key for the ReAct agent
         """
         self.token = token
+        self.api_key = api_key
         self.agent = ReActAgent(api_key)
         
         # Set up Discord intents
@@ -57,10 +60,6 @@ class ReActDiscordBot:
                     await message.channel.send("Please ask me a question after mentioning me!")
                     return
                 
-                # Add current datetime to the query so the bot can consider current time
-                current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                question_with_time = f"[Current date and time: {current_time}] {question}"
-                
                 # Add a thinking emoji reaction to the original message
                 try:
                     await message.add_reaction("⏳")
@@ -69,11 +68,36 @@ class ReActDiscordBot:
                     pass
                 
                 try:
+                    # Detect user intent (sarcastic vs serious)
+                    intent = await asyncio.to_thread(self._detect_intent, question)
+                    is_sarcastic = intent.get("is_sarcastic", False)
+                    
+                    # Add current datetime to the query so the bot can consider current time
+                    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    
+                    # Modify the question based on intent
+                    if is_sarcastic:
+                        # For sarcastic queries, instruct agent to be concise and sarcastic
+                        question_with_context = f"""[Current date and time: {current_time}]
+[User Intent: Sarcastic/Humorous - Respond with wit, sarcasm, and keep it VERY concise (2-3 sentences max)]
+
+User question: {question}"""
+                    else:
+                        # For serious queries, instruct agent to be thorough
+                        question_with_context = f"""[Current date and time: {current_time}]
+[User Intent: Serious - Provide a thorough, informative response]
+
+User question: {question}"""
+                    
                     # Use the ReAct agent to answer the question (verbose=False to reduce log noise)
                     # Run in a thread pool to avoid blocking the Discord event loop and heartbeat
                     answer = await asyncio.to_thread(
-                        self.agent.run, question_with_time, max_iterations=5, verbose=False
+                        self.agent.run, question_with_context, max_iterations=5, verbose=False
                     )
+                    
+                    # For serious queries with long responses, add TL;DR
+                    if not is_sarcastic:
+                        answer = await asyncio.to_thread(self._add_tldr_to_response, answer)
                     
                     # Remove the thinking emoji reaction
                     try:
@@ -113,6 +137,110 @@ class ReActDiscordBot:
                         pass
                     await message.channel.send(f"❌ Error: {str(e)}")
                     print(f"Error processing question: {e}")
+    
+    def _detect_intent(self, message: str) -> dict:
+        """
+        Detect the intent of a user message (sarcastic vs serious).
+        
+        Args:
+            message: The user's message
+            
+        Returns:
+            Dictionary with 'is_sarcastic' (bool) and 'confidence' (str)
+        """
+        prompt = f"""Analyze the following message and determine if the user is being sarcastic or serious.
+Respond with ONLY a JSON object in this exact format:
+{{"is_sarcastic": true/false, "confidence": "high/medium/low"}}
+
+Message: "{message}"
+
+JSON Response:"""
+        
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        data = {
+            "model": "tngtech/deepseek-r1t2-chimera:free",
+            "messages": [
+                {"role": "user", "content": prompt}
+            ]
+        }
+        
+        try:
+            response = requests.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers=headers,
+                json=data,
+                timeout=10
+            )
+            response.raise_for_status()
+            result = response.json()
+            content = result["choices"][0]["message"]["content"].strip()
+            
+            # Extract JSON from response (handle cases with markdown code blocks)
+            if "```json" in content:
+                content = content.split("```json")[1].split("```")[0].strip()
+            elif "```" in content:
+                content = content.split("```")[1].split("```")[0].strip()
+            
+            # Try to parse JSON
+            intent_data = json.loads(content)
+            return intent_data
+        except Exception as e:
+            # Default to serious if detection fails
+            print(f"Intent detection failed: {e}")
+            return {"is_sarcastic": False, "confidence": "low"}
+    
+    def _add_tldr_to_response(self, response: str) -> str:
+        """
+        Add a TL;DR to long responses.
+        
+        Args:
+            response: The full response text
+            
+        Returns:
+            Response with TL;DR prepended if applicable
+        """
+        # Add TL;DR for responses longer than 300 characters
+        if len(response) > 300:
+            prompt = f"""Provide a concise TL;DR (1-2 sentences max) for this response:
+
+{response}
+
+TL;DR:"""
+            
+            headers = {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json"
+            }
+            
+            data = {
+                "model": "tngtech/deepseek-r1t2-chimera:free",
+                "messages": [
+                    {"role": "user", "content": prompt}
+                ]
+            }
+            
+            try:
+                llm_response = requests.post(
+                    "https://openrouter.ai/api/v1/chat/completions",
+                    headers=headers,
+                    json=data,
+                    timeout=10
+                )
+                llm_response.raise_for_status()
+                result = llm_response.json()
+                tldr = result["choices"][0]["message"]["content"].strip()
+                
+                # Format the response with TL;DR
+                return f"**TL;DR:** {tldr}\n\n---\n\n{response}"
+            except Exception as e:
+                print(f"TL;DR generation failed: {e}")
+                return response
+        
+        return response
     
     def run(self):
         """Start the Discord bot."""
