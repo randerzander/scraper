@@ -212,7 +212,7 @@ Question: {question}
             result["action"] = action_match.group(1).strip()
         
         # Extract action input
-        action_input_match = re.search(r"Action Input:\s*(.+?)(?=\n(?:Thought:|Action:|Final Answer:|$))", response, re.DOTALL | re.IGNORECASE)
+        action_input_match = re.search(r"Action Input:\s*(.+?)(?=\n(?:Thought:|Action:|Final Answer:)|$)", response, re.DOTALL | re.IGNORECASE)
         if action_input_match:
             result["action_input"] = action_input_match.group(1).strip()
         
