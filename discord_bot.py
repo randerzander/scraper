@@ -7,6 +7,7 @@ The bot's token should be in a file named 'token.txt' in the current working dir
 """
 
 import os
+import asyncio
 import discord
 from react_agent import ReActAgent
 
@@ -60,7 +61,10 @@ class ReActDiscordBot:
                 
                 try:
                     # Use the ReAct agent to answer the question (verbose=False to reduce log noise)
-                    answer = self.agent.run(question, max_iterations=5, verbose=False)
+                    # Run in a thread pool to avoid blocking the Discord event loop and heartbeat
+                    answer = await asyncio.to_thread(
+                        self.agent.run, question, max_iterations=5, verbose=False
+                    )
                     
                     # Discord has a 2000 character limit for messages
                     if len(answer) > 1900:
