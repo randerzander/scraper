@@ -8,7 +8,7 @@ without blocking the event loop and correctly detects user intent.
 import asyncio
 import time
 import json
-from unittest.mock import Mock, AsyncMock, patch, MagicMock
+from unittest.mock import Mock, patch
 from discord_bot import ReActDiscordBot
 
 
