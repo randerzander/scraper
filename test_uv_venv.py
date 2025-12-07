@@ -8,17 +8,44 @@ import os
 import subprocess
 import sys
 import shutil
+import platform
 
 
-def run_command(command, shell=True, capture_output=True, use_bash=False):
-    """Run a shell command and return the result."""
-    if use_bash:
-        command = ["bash", "-c", command]
-        shell = False
+def get_venv_python(venv_path):
+    """Get the path to the Python executable in the venv."""
+    if platform.system() == "Windows":
+        return os.path.join(venv_path, "Scripts", "python.exe")
+    else:
+        return os.path.join(venv_path, "bin", "python")
+
+
+def get_venv_activate_script(venv_path):
+    """Get the path to the activation script in the venv."""
+    if platform.system() == "Windows":
+        return os.path.join(venv_path, "Scripts", "activate.bat")
+    else:
+        return os.path.join(venv_path, "bin", "activate")
+
+
+def run_in_venv(venv_path, command):
+    """Run a command in the virtual environment using the venv's Python."""
+    python_executable = get_venv_python(venv_path)
+    if not os.path.exists(python_executable):
+        raise FileNotFoundError(f"Python executable not found: {python_executable}")
     
+    # Use the venv's Python executable directly instead of shell activation
     result = subprocess.run(
-        command,
-        shell=shell,
+        [python_executable] + command.split(),
+        capture_output=True,
+        text=True
+    )
+    return result
+
+
+def run_command(command, capture_output=True):
+    """Run a shell command and return the result."""
+    result = subprocess.run(
+        command.split(),
         capture_output=capture_output,
         text=True
     )
@@ -65,8 +92,8 @@ def test_create_venv():
     
     print("✓ Virtual environment 'scraper' created successfully")
     
-    # Check for activation script
-    activate_script = os.path.join(venv_path, "bin", "activate")
+    # Check for activation script (platform-specific)
+    activate_script = get_venv_activate_script(venv_path)
     if not os.path.exists(activate_script):
         print(f"❌ Activation script not found at {activate_script}")
         return False
@@ -86,8 +113,12 @@ def test_install_dependencies():
         print("❌ Virtual environment does not exist")
         return False
     
-    # Install dependencies using uv pip
-    result = run_command(f"source {venv_path}/bin/activate && uv pip install -r requirements.txt", use_bash=True)
+    # Install dependencies using uv pip (uv is a system tool)
+    result = subprocess.run(
+        ["uv", "pip", "install", "-r", "requirements.txt", "--python", get_venv_python(venv_path)],
+        capture_output=True,
+        text=True
+    )
     if result.returncode != 0:
         print(f"❌ Failed to install dependencies: {result.stderr}")
         return False
@@ -95,7 +126,12 @@ def test_install_dependencies():
     print("✓ Dependencies installed successfully")
     
     # Verify key packages are installed
-    result = run_command(f"source {venv_path}/bin/activate && python -c 'import duckduckgo_search; import pyreadability; import requests'", use_bash=True)
+    python_executable = get_venv_python(venv_path)
+    result = subprocess.run(
+        [python_executable, "-c", "import duckduckgo_search; import pyreadability; import requests"],
+        capture_output=True,
+        text=True
+    )
     if result.returncode != 0:
         print(f"❌ Failed to import required packages: {result.stderr}")
         return False
@@ -115,7 +151,13 @@ def test_run_tests():
         print("❌ Virtual environment does not exist")
         return False
     
-    result = run_command(f"source {venv_path}/bin/activate && python test_react_agent.py", use_bash=True)
+    # Run tests using the venv's Python
+    python_executable = get_venv_python(venv_path)
+    result = subprocess.run(
+        [python_executable, "test_react_agent.py"],
+        capture_output=True,
+        text=True
+    )
     if result.returncode != 0:
         print(f"❌ Test suite failed: {result.stderr}")
         return False
