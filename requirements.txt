@@ -1,3 +1,4 @@
 duckduckgo-search>=5.0.0
 git+https://github.com/randerzander/pyreadability.git@aed630c5a345aaf7432b16b7a45da3e71d5ae275
 requests>=2.31.0
+discord.py>=2.3.0

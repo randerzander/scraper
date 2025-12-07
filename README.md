@@ -80,6 +80,33 @@ answer = agent.run("What is the latest news about artificial intelligence?", ver
 print(answer)
 ```
 
+### Discord Bot
+
+Run the agent as a Discord bot that responds to mentions:
+
+```bash
+python discord_bot.py
+```
+
+**Requirements:**
+1. Create a `token.txt` file in the current directory with your Discord bot token
+2. Set the `OPENROUTER_API_KEY` environment variable
+
+**How to get a Discord bot token:**
+1. Go to [Discord Developer Portal](https://discord.com/developers/applications)
+2. Create a new application (or select an existing one)
+3. Go to the "Bot" section and click "Reset Token"
+4. Save the token to `token.txt` in the project directory
+5. Enable "Message Content Intent" in the Bot settings
+6. Use the OAuth2 URL Generator to create an invite link with:
+   - Scopes: `bot`
+   - Bot Permissions: `Read Messages/View Channels`, `Send Messages`, `Read Message History`
+
+**Usage:**
+- Mention the bot in a Discord message followed by your question
+- Example: `@YourBot What is the latest news about artificial intelligence?`
+- The bot will use the ReAct agent to search and scrape information to answer your question
+
 ### Testing
 
 Run the test suite to verify the implementation:
@@ -143,6 +170,7 @@ Final Answer: [Comprehensive answer based on search results]
 
 - `react_agent.py` - Main implementation of the ReAct agent
 - `example.py` - Example usage with multiple scenarios
+- `discord_bot.py` - Discord bot wrapper for the ReAct agent
 - `test_react_agent.py` - Test suite for the agent
 - `test_uv_venv.py` - Test script for uv virtual environment setup
 - `requirements.txt` - Python dependencies
