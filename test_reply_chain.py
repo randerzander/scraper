@@ -78,7 +78,8 @@ async def test_reply_chain_context():
                 current_msg = ref_msg
                 depth += 1
             except (AttributeError, KeyError):
-                # Mock object exceptions - in production this would be Discord exceptions
+                # Mock object exceptions - in production code uses Discord-specific exceptions
+                # (discord.NotFound, discord.Forbidden, discord.HTTPException)
                 break
         
         # Reverse to get chronological order (oldest first)
