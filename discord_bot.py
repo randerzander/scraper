@@ -905,6 +905,11 @@ TL;DR:"""
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             # Sanitize username to be filesystem-safe (replace spaces and special chars with underscore)
             safe_username = "".join(c if c.isalnum() or c in ('-', '_') else '_' for c in username)
+            # Handle empty username and limit length to prevent filesystem issues
+            if not safe_username or safe_username.replace('_', '').strip() == '':
+                safe_username = "unknown_user"
+            # Limit username to 50 characters to prevent excessively long filenames
+            safe_username = safe_username[:50]
             filename = f"{safe_username}_{timestamp}.json"
             filepath = self.QUERY_LOGS_DIR / filename
             
