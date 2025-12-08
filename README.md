@@ -52,9 +52,17 @@ cp .env.example .env
 ```
 
 4. (Optional) Set up your GitHub token if you want to use the GitHub issue creation tool:
-```bash
-export GITHUB_TOKEN=your_github_token_here
-```
+
+   **Option A: Environment Variable**
+   ```bash
+   export GITHUB_TOKEN=your_github_token_here
+   ```
+
+   **Option B: Token File**
+   ```bash
+   # Create a file named github_token.txt in the current directory
+   echo "your_github_token_here" > github_token.txt
+   ```
 
 You can create a GitHub token at: https://github.com/settings/tokens
 For the `create_github_issue` tool, the token needs the following permissions:
@@ -164,7 +172,7 @@ The ReAct agent follows a thought-action-observation loop:
   - Input: A JSON string with 'title' and 'description' keys
   - Example: `{"title": "Bug report", "description": "Detailed description of the issue"}`
   - Output: Success message with issue URL or error message
-  - Requirements: GITHUB_TOKEN environment variable must be set
+  - Requirements: GITHUB_TOKEN environment variable or github_token.txt file must be set
 
 ## Example
 

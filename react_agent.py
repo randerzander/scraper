@@ -92,10 +92,20 @@ def create_github_issue(issue_input: str) -> str:
         if not title:
             return "Error: Issue title cannot be empty"
         
-        # Get GitHub token from environment
+        # Get GitHub token from environment or file
         github_token = os.getenv("GITHUB_TOKEN")
         if not github_token:
-            return "Error: GITHUB_TOKEN environment variable not set. Please set it to create GitHub issues."
+            # Try reading from github_token.txt
+            token_file = "github_token.txt"
+            if os.path.exists(token_file):
+                try:
+                    with open(token_file, 'r') as f:
+                        github_token = f.read().strip()
+                except Exception as file_error:
+                    return f"Error reading {token_file}: {str(file_error)}"
+        
+        if not github_token:
+            return "Error: GITHUB_TOKEN environment variable not set and github_token.txt file not found. Please set the environment variable or create a github_token.txt file to create GitHub issues."
         
         # Initialize GitHub client
         g = Github(github_token)

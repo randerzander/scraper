@@ -24,18 +24,23 @@ def main():
         print("\nSet them with:")
         print("  export OPENROUTER_API_KEY=your_key_here")
         print("  export GITHUB_TOKEN=your_token_here")
+        print("\nOr create github_token.txt file:")
+        print("  echo 'your_token_here' > github_token.txt")
         print("="*80)
         return
     
-    if not github_token:
+    # Check for GitHub token in environment or file
+    if not github_token and not os.path.exists("github_token.txt"):
         print("="*80)
-        print("WARNING: GITHUB_TOKEN environment variable not set")
+        print("WARNING: GITHUB_TOKEN environment variable not set and github_token.txt not found")
         print("="*80)
         print("\nThe GitHub issue creation tool will not work without it.")
         print("Get a token from: https://github.com/settings/tokens")
         print("The token needs 'repo' scope for creating issues.")
         print("\nSet it with:")
         print("  export GITHUB_TOKEN=your_token_here")
+        print("\nOr create a file:")
+        print("  echo 'your_token_here' > github_token.txt")
         print("="*80)
         print("\nContinuing with other tools...\n")
     
@@ -55,7 +60,10 @@ def main():
     print(f"\nQuestion: {question}")
     print("\n" + "-"*80)
     
-    if github_token:
+    # Check if token is available via env or file
+    has_token = github_token or os.path.exists("github_token.txt")
+    
+    if has_token:
         answer = agent.run(question, max_iterations=3, verbose=True)
         print("\n" + "="*80)
         print("FINAL ANSWER:")
