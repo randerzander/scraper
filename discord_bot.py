@@ -26,45 +26,11 @@ except ImportError:
 from datetime import datetime
 from pathlib import Path
 from react_agent import ReActAgent, two_round_image_caption
-from colorama import Fore, Style, init
-
-# Initialize colorama for colored output
-init(autoreset=True)
-
-# Custom colored formatter for logging
-class ColoredFormatter(logging.Formatter):
-    """Custom formatter that adds colors to log levels."""
-    
-    COLORS = {
-        'DEBUG': Fore.BLUE,
-        'INFO': Fore.CYAN,
-        'WARNING': Fore.YELLOW,
-        'ERROR': Fore.RED,
-        'CRITICAL': Fore.RED + Style.BRIGHT,
-    }
-    
-    def format(self, record):
-        # Add color to the level name
-        levelname = record.levelname
-        if levelname in self.COLORS:
-            record.levelname = f"{self.COLORS[levelname]}{levelname}{Style.RESET_ALL}"
-        # Format the message
-        result = super().format(record)
-        # Reset levelname for next use
-        record.levelname = levelname
-        return result
+from colorama import Fore, Style
+from utils import setup_logging, CHARS_PER_TOKEN
 
 # Configure logging with colored formatter
-handler = logging.StreamHandler()
-handler.setFormatter(ColoredFormatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
-logging.basicConfig(
-    level=logging.INFO,
-    handlers=[handler]
-)
-logger = logging.getLogger(__name__)
-
-# Token calculation constant
-CHARS_PER_TOKEN = 4.5
+logger = setup_logging()
 
 
 # Load bot configuration
