@@ -78,18 +78,20 @@ class ReActDiscordBot:
             print(f"Bot is ready to answer questions!")
             print(f"Invite link: https://discord.com/api/oauth2/authorize?client_id={self.client.user.id}&permissions=2048&scope=bot")
         
-        async def get_reply_chain(message) -> str:
+        async def get_reply_chain(message) -> tuple[str, list[str]]:
             """
             Get the full reply chain context for a message.
             Follows the chain of replied-to messages up to the root.
+            Also collects image attachments from the reply chain.
             
             Args:
                 message: The Discord message to get reply chain for
                 
             Returns:
-                A formatted string with the reply chain context, or empty string if no replies
+                A tuple of (formatted string with reply chain context, list of image URLs from replies)
             """
             chain = []
+            reply_image_urls = []
             current_msg = message
             max_chain_depth = 10  # Limit chain depth to prevent performance issues
             depth = 0
@@ -105,6 +107,14 @@ class ReActDiscordBot:
                     
                     if not ref_msg:
                         break
+                    
+                    # Check for image attachments in the replied message
+                    if ref_msg.attachments:
+                        for attachment in ref_msg.attachments:
+                            # Check if attachment is an image
+                            if attachment.content_type and attachment.content_type.startswith('image/'):
+                                reply_image_urls.append(attachment.url)
+                                logger.info(f"Found image attachment in reply chain: {attachment.url}")
                     
                     # Format the message content
                     author_name = ref_msg.author.display_name
@@ -127,10 +137,13 @@ class ReActDiscordBot:
             
             # Reverse to get chronological order (oldest first)
             chain.reverse()
+            reply_image_urls.reverse()  # Also reverse image URLs to match chronological order
             
+            reply_text = ""
             if chain:
-                return "Previous conversation context:\n" + "\n".join(chain) + "\n\n"
-            return ""
+                reply_text = "Previous conversation context:\n" + "\n".join(chain) + "\n\n"
+            
+            return reply_text, reply_image_urls
         
         @self.client.event
         async def on_message(message):
@@ -166,8 +179,13 @@ class ReActDiscordBot:
                 print(f"{Fore.GREEN}[USER QUERY] {message.author.display_name}: {question}{Style.RESET_ALL}")
                 logger.info(f"User query received from {message.author.display_name}: {question}")
                 
-                # Get reply chain context if this is a reply
-                reply_context = await get_reply_chain(message)
+                # Get reply chain context if this is a reply (also gets images from reply chain)
+                reply_context, reply_image_urls = await get_reply_chain(message)
+                
+                # Combine images from current message and reply chain
+                if reply_image_urls:
+                    image_urls.extend(reply_image_urls)
+                    logger.info(f"Added {len(reply_image_urls)} image(s) from reply chain")
                 
                 # Add a thinking emoji reaction to the original message
                 try:
@@ -228,6 +246,12 @@ class ReActDiscordBot:
                     
                     # Log the final response in red
                     print(f"{Fore.RED}[FINAL RESPONSE] {answer[:100]}...{Style.RESET_ALL}" if len(answer) > 100 else f"{Fore.RED}[FINAL RESPONSE] {answer}{Style.RESET_ALL}")
+                    
+                    # If response is longer than 1000 characters, make it more concise
+                    if len(answer) > 1000:
+                        logger.info(f"Response length {len(answer)} exceeds 1000 characters, making it more concise...")
+                        answer = await asyncio.to_thread(self._make_response_concise, answer)
+                        logger.info(f"Concise response length: {len(answer)}")
                     
                     # For serious queries with long responses, add TL;DR
                     if not is_sarcastic:
@@ -571,6 +595,32 @@ JSON Response:"""
             # Default to serious if detection fails
             print(f"Intent detection failed: {e}")
             return {"is_sarcastic": False, "confidence": "low"}
+    
+    def _make_response_concise(self, response: str) -> str:
+        """
+        Make a response more concise if it's too long.
+        
+        Args:
+            response: The full response text
+            
+        Returns:
+            A more concise version of the response
+        """
+        prompt = f"""Make the following response MUCH more concise while preserving the key information and main points. 
+Aim to reduce it significantly in length while keeping it informative and coherent.
+
+Original response:
+{response}
+
+Concise version:"""
+        
+        try:
+            concise_response = self._call_llm(prompt)
+            return concise_response
+        except Exception as e:
+            print(f"Failed to make response concise: {e}")
+            # Return original response if conciseness reduction fails
+            return response
     
     def _add_tldr_to_response(self, response: str) -> str:
         """
