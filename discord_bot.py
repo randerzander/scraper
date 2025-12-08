@@ -117,8 +117,9 @@ class ReActDiscordBot:
                 except (ValueError, TypeError):
                     limit = 10
                 
-                # Use asyncio.run to execute the async function
-                # This will work because the tool is called in a separate thread via asyncio.to_thread
+                # This function runs in a separate thread via asyncio.to_thread()
+                # So we need to create a new event loop for this thread
+                # We can't use asyncio.run() directly because it's not available in all contexts
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
                 try:
@@ -128,6 +129,8 @@ class ReActDiscordBot:
                     return result
                 finally:
                     loop.close()
+                    # Clear the event loop for this thread to avoid leaks
+                    asyncio.set_event_loop(None)
                     
             except Exception as e:
                 return f"Error reading channel history: {str(e)}"

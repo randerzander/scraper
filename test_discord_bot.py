@@ -336,8 +336,9 @@ async def test_channel_history_async_reading():
         mock_channel_empty = Mock()
         
         async def mock_empty_history(limit=10):
-            return
-            yield  # Make it an async generator
+            # Empty async generator - yields nothing
+            if False:
+                yield
         
         mock_channel_empty.history = mock_empty_history
         
