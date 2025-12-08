@@ -12,6 +12,7 @@ from duckduckgo_search import DDGS
 from pyreadability import Readability
 import html2text
 import requests
+from github import Github
 
 
 # Tool implementations
@@ -69,6 +70,58 @@ def scrape_url(url: str) -> str:
         return f"Error scraping URL: {str(e)}"
 
 
+def create_github_issue(issue_input: str) -> str:
+    """
+    Create a GitHub issue on the randerzander/scraper repository and assign it to copilot.
+    
+    Args:
+        issue_input: A JSON string containing 'title' and 'description' keys
+        
+    Returns:
+        Success message with issue URL or error message
+    """
+    try:
+        # Parse the input
+        try:
+            issue_data = json.loads(issue_input)
+            title = issue_data.get('title', '')
+            description = issue_data.get('description', '')
+        except json.JSONDecodeError:
+            return "Error: Issue input must be a JSON string with 'title' and 'description' keys. Example: {\"title\": \"Issue title\", \"description\": \"Issue description\"}"
+        
+        if not title:
+            return "Error: Issue title cannot be empty"
+        
+        # Get GitHub token from environment
+        github_token = os.getenv("GITHUB_TOKEN")
+        if not github_token:
+            return "Error: GITHUB_TOKEN environment variable not set. Please set it to create GitHub issues."
+        
+        # Initialize GitHub client
+        g = Github(github_token)
+        
+        # Get the repository
+        repo = g.get_repo("randerzander/scraper")
+        
+        # Create the issue
+        issue = repo.create_issue(
+            title=title,
+            body=description
+        )
+        
+        # Assign the issue to copilot (GitHub username)
+        try:
+            issue.add_to_assignees("copilot")
+        except Exception as assign_error:
+            # If assignment fails, still return success with a note
+            return f"Issue created successfully at {issue.html_url}\nNote: Could not assign to 'copilot': {str(assign_error)}"
+        
+        return f"Issue created successfully and assigned to copilot!\nIssue URL: {issue.html_url}\nIssue Number: #{issue.number}"
+        
+    except Exception as e:
+        return f"Error creating GitHub issue: {str(e)}"
+
+
 # ReAct Agent implementation
 class ReActAgent:
     """
@@ -102,6 +155,11 @@ class ReActAgent:
                 "function": scrape_url,
                 "description": "Scrape and parse HTML content from a URL into markdown format. Input should be a URL.",
                 "parameters": ["url"]
+            },
+            "create_github_issue": {
+                "function": create_github_issue,
+                "description": "Create a GitHub issue on the randerzander/scraper repository and assign it to copilot. Input should be a JSON string with 'title' and 'description' keys. Example: {\"title\": \"Bug report\", \"description\": \"Detailed description of the issue\"}",
+                "parameters": ["issue_input"]
             }
         }
     

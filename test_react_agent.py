@@ -25,6 +25,11 @@ class MockReActAgent(ReActAgent):
                 "function": lambda url: "# Test Article\n\nThis is test content from the URL.",
                 "description": "Scrape and parse HTML content from a URL into markdown format. Input should be a URL.",
                 "parameters": ["url"]
+            },
+            "create_github_issue": {
+                "function": lambda issue_input: "Issue created successfully and assigned to copilot!\nIssue URL: https://github.com/randerzander/scraper/issues/1\nIssue Number: #1",
+                "description": "Create a GitHub issue on the randerzander/scraper repository and assign it to copilot. Input should be a JSON string with 'title' and 'description' keys.",
+                "parameters": ["issue_input"]
             }
         }
         self.test_responses = []
@@ -100,12 +105,19 @@ def test_tool_execution():
     assert "Test Article" in result
     print("✓ Test 4 passed")
     
+    # Test GitHub issue creation tool
+    result = agent._execute_action("create_github_issue", '{"title": "Test Issue", "description": "Test description"}')
+    print("\nTest 5 - Execute GitHub issue creation tool:")
+    print(f"Result: {result}")
+    assert "Issue created successfully" in result
+    print("✓ Test 5 passed")
+    
     # Test unknown tool
     result = agent._execute_action("unknown_tool", "input")
-    print("\nTest 5 - Unknown tool error handling:")
+    print("\nTest 6 - Unknown tool error handling:")
     print(f"Result: {result}")
     assert "Error" in result
-    print("✓ Test 5 passed")
+    print("✓ Test 6 passed")
     
     print("\n✓ All tool execution tests passed!")
 
@@ -127,10 +139,10 @@ Final Answer: Here is the answer based on the search results."""
     ])
     
     result = agent.run("What is a test?", max_iterations=3, verbose=False)
-    print("\nTest 6 - Full agent loop:")
+    print("\nTest 7 - Full agent loop:")
     print(f"Result: {result}")
     assert "answer based on the search results" in result
-    print("✓ Test 6 passed")
+    print("✓ Test 7 passed")
     
     print("\n✓ All agent loop tests passed!")
 
