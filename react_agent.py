@@ -22,6 +22,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Token calculation constant
+CHARS_PER_TOKEN = 4.5
+
 
 # Tool implementations
 def duckduckgo_search(query: str, max_results: int = 5) -> List[Dict[str, str]]:
@@ -184,7 +187,7 @@ Question: {question}
         }
         
         # Calculate input tokens
-        input_tokens = int(len(prompt) / 4.5)
+        input_tokens = int(len(prompt) / CHARS_PER_TOKEN)
         
         # Log LLM call
         logger.info(f"LLM call started - Model: {self.model}, Input tokens: {input_tokens}")
@@ -197,7 +200,7 @@ Question: {question}
             content = result["choices"][0]["message"]["content"]
             
             # Calculate output tokens and response time
-            output_tokens = int(len(content) / 4.5)
+            output_tokens = int(len(content) / CHARS_PER_TOKEN)
             response_time = time.time() - start_time
             
             # Log LLM response

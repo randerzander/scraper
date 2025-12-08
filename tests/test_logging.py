@@ -256,9 +256,13 @@ def test_tool_error_logging():
     agent = ReActAgent("mock_key", "mock_model")
     
     # Override tools with a function that raises an exception
+    def failing_tool_function(input_arg):
+        """A tool function that always fails."""
+        raise Exception("Tool error")
+    
     agent.tools = {
         "failing_tool": {
-            "function": lambda x: (_ for _ in ()).throw(Exception("Tool error")),
+            "function": failing_tool_function,
             "description": "A tool that fails",
             "parameters": ["input"]
         }

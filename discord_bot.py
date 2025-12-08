@@ -23,6 +23,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Token calculation constant
+CHARS_PER_TOKEN = 4.5
+
 
 class ReActDiscordBot:
     """Discord bot that wraps the ReAct agent."""
@@ -369,7 +372,7 @@ class ReActDiscordBot:
         }
         
         # Calculate input tokens
-        input_tokens = int(len(prompt) / 4.5)
+        input_tokens = int(len(prompt) / CHARS_PER_TOKEN)
         
         # Log LLM call
         logger.info(f"LLM call started - Model: {model_to_use}, Input tokens: {input_tokens}")
@@ -386,7 +389,7 @@ class ReActDiscordBot:
         content = result["choices"][0]["message"]["content"].strip()
         
         # Calculate output tokens and response time
-        output_tokens = int(len(content) / 4.5)
+        output_tokens = int(len(content) / CHARS_PER_TOKEN)
         response_time = time.time() - start_time
         
         # Log LLM response
