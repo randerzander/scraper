@@ -213,8 +213,8 @@ def test_intent_detection_uses_fast_model():
     print("\nTesting that intent detection uses the faster model...")
     print("="*60)
     
-    with patch('discord_bot.discord.Client') as MockClient, \
-         patch('discord_bot.ReActAgent') as MockAgent, \
+    with patch('discord_bot.discord.Client'), \
+         patch('discord_bot.ReActAgent'), \
          patch.object(ReActDiscordBot, '_call_llm') as mock_call_llm:
         
         # Create bot instance
