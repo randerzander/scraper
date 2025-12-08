@@ -44,6 +44,7 @@ def load_config():
         logger.warning(f"Config file not found at {config_path}, using defaults")
         return {
             "auto_restart": True,
+            "base_url": "https://openrouter.ai/api/v1/chat/completions",
             "default_model": "amazon/nova-2-lite-v1:free",
             "intent_detection_model": "amazon/nova-2-lite-v1:free",
             "image_caption_model": "nvidia/nemotron-nano-12b-v2-vl:free",
@@ -54,6 +55,7 @@ def load_config():
         logger.error(f"Error loading config: {e}, using defaults")
         return {
             "auto_restart": True,
+            "base_url": "https://openrouter.ai/api/v1/chat/completions",
             "default_model": "amazon/nova-2-lite-v1:free",
             "intent_detection_model": "amazon/nova-2-lite-v1:free",
             "image_caption_model": "nvidia/nemotron-nano-12b-v2-vl:free",
@@ -83,7 +85,9 @@ class ReActDiscordBot:
         """
         self.token = token
         self.api_key = api_key
-        self.agent = ReActAgent(api_key)
+        # Get base_url from config, default to OpenRouter
+        base_url = CONFIG.get("base_url", "https://openrouter.ai/api/v1/chat/completions")
+        self.agent = ReActAgent(api_key, base_url=base_url)
         
         # Ensure data directory exists
         self.DATA_DIR.mkdir(exist_ok=True)
@@ -212,6 +216,9 @@ class ReActDiscordBot:
                 # Reset tracking for new query
                 self._reset_query_tracking()
                 
+                # Track start time for total response time
+                query_start_time = time.time()
+                
                 # Get reply chain context if this is a reply (also gets images from reply chain)
                 reply_context, reply_image_urls = await get_reply_chain(message)
                 
@@ -296,6 +303,34 @@ class ReActDiscordBot:
                     except (discord.Forbidden, discord.NotFound, discord.HTTPException):
                         # If we can't remove the reaction, continue anyway
                         pass
+                    
+                    # Calculate total response time
+                    total_response_time = time.time() - query_start_time
+                    
+                    # Get tracking data from agent and merge with discord bot stats
+                    agent_tracking = self.agent.get_tracking_data()
+                    merged_token_stats = dict(self.current_query_token_stats)
+                    for model, stats in agent_tracking["token_stats"].items():
+                        if model not in merged_token_stats:
+                            merged_token_stats[model] = {
+                                "total_input_tokens": 0,
+                                "total_output_tokens": 0,
+                                "total_calls": 0
+                            }
+                        merged_token_stats[model]["total_input_tokens"] += stats["total_input_tokens"]
+                        merged_token_stats[model]["total_output_tokens"] += stats["total_output_tokens"]
+                        merged_token_stats[model]["total_calls"] += stats["total_calls"]
+                    
+                    # Calculate totals across all models
+                    total_input_tokens = sum(stats["total_input_tokens"] for stats in merged_token_stats.values())
+                    total_output_tokens = sum(stats["total_output_tokens"] for stats in merged_token_stats.values())
+                    
+                    # Format metadata in small font
+                    models_used = ", ".join(merged_token_stats.keys())
+                    metadata = f"\n\n-# *Models: {models_used} • Tokens: {total_input_tokens} in / {total_output_tokens} out • Time: {round(total_response_time)}s*"
+                    
+                    # Append metadata to answer
+                    answer = answer + metadata
                     
                     # Save the complete answer before sending it
                     complete_answer = answer
@@ -507,7 +542,8 @@ class ReActDiscordBot:
                     image_url=image_url,
                     api_key=self.api_key,
                     user_query=user_query,
-                    model=MODEL_CONFIG.get("image_caption_model", "nvidia/nemotron-nano-12b-v2-vl:free")
+                    model=MODEL_CONFIG.get("image_caption_model", "nvidia/nemotron-nano-12b-v2-vl:free"),
+                    base_url=MODEL_CONFIG.get("base_url", "https://openrouter.ai/api/v1/chat/completions")
                 )
                 return result
             except Exception as e:
@@ -571,12 +607,15 @@ class ReActDiscordBot:
         # Calculate input tokens
         input_tokens = int(len(prompt) / CHARS_PER_TOKEN)
         
+        # Get base_url from config
+        base_url = MODEL_CONFIG.get("base_url", "https://openrouter.ai/api/v1/chat/completions")
+        
         # Log LLM call
         logger.info(f"LLM call started - Model: {model_to_use}, Input tokens: {input_tokens}")
         start_time = time.time()
         
         response = requests.post(
-            "https://openrouter.ai/api/v1/chat/completions",
+            base_url,
             headers=headers,
             json=data,
             timeout=timeout
@@ -601,8 +640,8 @@ class ReActDiscordBot:
             "type": "llm_call",
             "model": model_to_use,
             "timestamp": time.time(),
-            "input": prompt[:500] + "..." if len(prompt) > 500 else prompt,
-            "output": content[:500] + "..." if len(content) > 500 else content,
+            "input": prompt,
+            "output": content,
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
             "response_time_seconds": round(response_time, 2),

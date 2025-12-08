@@ -34,12 +34,14 @@ def load_model_config():
     except FileNotFoundError:
         logger.warning(f"Config file not found at {config_path}, using defaults")
         return {
+            "base_url": "https://openrouter.ai/api/v1/chat/completions",
             "default_model": "amazon/nova-2-lite-v1:free",
             "image_caption_model": "nvidia/nemotron-nano-12b-v2-vl:free"
         }
     except Exception as e:
         logger.error(f"Error loading config: {e}, using defaults")
         return {
+            "base_url": "https://openrouter.ai/api/v1/chat/completions",
             "default_model": "amazon/nova-2-lite-v1:free",
             "image_caption_model": "nvidia/nemotron-nano-12b-v2-vl:free"
         }
@@ -102,6 +104,58 @@ def scrape_url(url: str) -> str:
         return f"Error scraping URL: {str(e)}"
 
 
+def read_file(filepath: str) -> str:
+    """
+    Read a file from the current working directory.
+    This tool allows the agent to read files that are needed to answer questions.
+    
+    Args:
+        filepath: Path to the file to read (relative to current working directory)
+        
+    Returns:
+        Content of the file or error message
+    """
+    try:
+        # Get the current working directory (fully resolved)
+        cwd = Path.cwd().resolve()
+        
+        # Resolve the file path relative to cwd (this also resolves symlinks)
+        file_path = (cwd / filepath).resolve()
+        
+        # Security check: ensure the resolved path is within cwd
+        # This prevents directory traversal attacks and symlink-based bypasses
+        try:
+            file_path.relative_to(cwd)
+        except ValueError:
+            return f"Error: Access denied. File path '{filepath}' is outside the current working directory."
+        
+        # Check if file exists
+        if not file_path.exists():
+            return f"Error: File '{filepath}' not found in current working directory."
+        
+        # Check if it's a file (not a directory)
+        if not file_path.is_file():
+            return f"Error: '{filepath}' is not a file."
+        
+        # Check file size to avoid reading very large files
+        max_size = 1024 * 1024  # 1 MB limit
+        file_size = file_path.stat().st_size
+        if file_size > max_size:
+            return f"Error: File '{filepath}' is too large ({file_size} bytes). Maximum size is {max_size} bytes (1 MB)."
+        
+        # Read the file
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            return content
+        except UnicodeDecodeError:
+            # If the file is binary, return an error
+            return f"Error: File '{filepath}' appears to be a binary file and cannot be read as text."
+        
+    except Exception as e:
+        return f"Error reading file: {str(e)}"
+
+
 def download_image(url: str, save_path: str = None) -> str:
     """
     Download an image from a URL and save it locally.
@@ -153,7 +207,7 @@ def image_to_base64(image_path: str) -> str:
         return base64.b64encode(f.read()).decode('utf-8')
 
 
-def caption_image_with_vlm(image_url: str, api_key: str, prompt: str = None, model: str = None) -> str:
+def caption_image_with_vlm(image_url: str, api_key: str, prompt: str = None, model: str = None, base_url: str = None) -> str:
     """
     Caption an image using a Vision Language Model (VLM) via OpenRouter API.
     
@@ -162,6 +216,7 @@ def caption_image_with_vlm(image_url: str, api_key: str, prompt: str = None, mod
         api_key: OpenRouter API key
         prompt: Optional custom prompt for captioning. If None, uses default.
         model: VLM model to use for captioning. If None, uses config default.
+        base_url: Base URL for OpenAI-compatible API. If None, uses config default.
         
     Returns:
         Caption text from the VLM
@@ -191,6 +246,10 @@ def caption_image_with_vlm(image_url: str, api_key: str, prompt: str = None, mod
         # Use config default if model not specified
         if model is None:
             model = MODEL_CONFIG.get("image_caption_model", "nvidia/nemotron-nano-12b-v2-vl:free")
+        
+        # Use config default if base_url not specified
+        if base_url is None:
+            base_url = MODEL_CONFIG.get("base_url", "https://openrouter.ai/api/v1/chat/completions")
         
         # Prepare the API request with image
         headers = {
@@ -223,7 +282,7 @@ def caption_image_with_vlm(image_url: str, api_key: str, prompt: str = None, mod
         start_time = time.time()
         
         response = requests.post(
-            "https://openrouter.ai/api/v1/chat/completions",
+            base_url,
             headers=headers,
             json=data,
             timeout=30
@@ -246,7 +305,7 @@ def caption_image_with_vlm(image_url: str, api_key: str, prompt: str = None, mod
         return f"Error captioning image: {str(e)}"
 
 
-def two_round_image_caption(image_url: str, api_key: str, user_query: str = None, model: str = None) -> str:
+def two_round_image_caption(image_url: str, api_key: str, user_query: str = None, model: str = None, base_url: str = None) -> str:
     """
     Perform two-round image captioning:
     1. First round: Get a basic caption of the image
@@ -257,6 +316,7 @@ def two_round_image_caption(image_url: str, api_key: str, user_query: str = None
         api_key: OpenRouter API key
         user_query: User's query/question about the image
         model: VLM model to use for captioning. If None, uses config default.
+        base_url: Base URL for OpenAI-compatible API. If None, uses config default.
         
     Returns:
         Detailed caption from the second round
@@ -266,12 +326,16 @@ def two_round_image_caption(image_url: str, api_key: str, user_query: str = None
         if model is None:
             model = MODEL_CONFIG.get("image_caption_model", "nvidia/nemotron-nano-12b-v2-vl:free")
         
+        # Use config default if base_url not specified
+        if base_url is None:
+            base_url = MODEL_CONFIG.get("base_url", "https://openrouter.ai/api/v1/chat/completions")
+        
         # First round: Basic caption
         logger.info("Starting first round of image captioning...")
         basic_prompt = "Describe this image in detail. What do you see? Include objects, people, actions, colors, and setting."
         
         try:
-            first_caption = caption_image_with_vlm(image_url, api_key, basic_prompt, model)
+            first_caption = caption_image_with_vlm(image_url, api_key, basic_prompt, model, base_url)
         except Exception as e:
             return f"Error in first round of captioning: {str(e)}"
         
@@ -293,7 +357,7 @@ Now, provide a more detailed analysis of the image, paying particular attention 
 Now, provide additional details about the image that weren't covered in the first description. Focus on fine details, context, and any notable aspects."""
         
         try:
-            second_caption = caption_image_with_vlm(image_url, api_key, second_prompt, model)
+            second_caption = caption_image_with_vlm(image_url, api_key, second_prompt, model, base_url)
         except Exception as e:
             return f"Error in second round of captioning: {str(e)}\n\nFirst round result: {first_caption}"
         
@@ -317,17 +381,18 @@ class ReActAgent:
     MAX_CONTENT_LENGTH = 4000  # Maximum length of scraped content to avoid context overflow
     API_TIMEOUT = 30  # Timeout for API calls in seconds
     
-    def __init__(self, api_key: str, model: str = None):
+    def __init__(self, api_key: str, model: str = None, base_url: str = None):
         """
         Initialize the ReAct agent.
         
         Args:
             api_key: OpenRouter API key
             model: Model to use for reasoning. If None, uses config default.
+            base_url: Base URL for OpenAI-compatible API. If None, uses config default.
         """
         self.api_key = api_key
         self.model = model if model is not None else MODEL_CONFIG.get("default_model", "amazon/nova-2-lite-v1:free")
-        self.api_url = "https://openrouter.ai/api/v1/chat/completions"
+        self.api_url = base_url if base_url is not None else MODEL_CONFIG.get("base_url", "https://openrouter.ai/api/v1/chat/completions")
         
         # Define available tools
         self.tools = {
@@ -340,6 +405,11 @@ class ReActAgent:
                 "function": scrape_url,
                 "description": "Scrape and parse HTML content from a URL into markdown format. Input should be a URL.",
                 "parameters": ["url"]
+            },
+            "read_file": {
+                "function": read_file,
+                "description": "Read a file from the current working directory. Input should be a file path relative to the current working directory (e.g., 'README.md', 'src/main.py'). Maximum file size is 1 MB.",
+                "parameters": ["filepath"]
             }
         }
         
@@ -468,8 +538,8 @@ Question: {question}
                 "type": "llm_call",
                 "model": self.model,
                 "timestamp": time.time(),
-                "input": prompt[:500] + "..." if len(prompt) > 500 else prompt,
-                "output": content[:500] + "..." if len(content) > 500 else content,
+                "input": prompt,
+                "output": content,
                 "input_tokens": input_tokens,
                 "output_tokens": output_tokens,
                 "response_time_seconds": round(response_time, 2),
@@ -499,7 +569,7 @@ Question: {question}
                 "type": "llm_call",
                 "model": self.model,
                 "timestamp": time.time(),
-                "input": prompt[:500] + "..." if len(prompt) > 500 else prompt,
+                "input": prompt,
                 "error": str(e),
                 "response_time_seconds": round(response_time, 2)
             }
@@ -567,7 +637,7 @@ Question: {question}
                 "type": "tool_call",
                 "tool_name": action,
                 "timestamp": time.time(),
-                "input": action_input[:500] + "..." if len(action_input) > 500 else action_input,
+                "input": action_input,
                 "error": error_msg
             }
             self.call_sequence.append(tool_entry)
@@ -598,7 +668,7 @@ Question: {question}
                             "type": "tool_call",
                             "tool_name": action,
                             "timestamp": time.time(),
-                            "input": action_input[:500] + "..." if len(action_input) > 500 else action_input,
+                            "input": action_input,
                             "error": r["error"],
                             "execution_time_seconds": round(time.time() - start_time, 2)
                         }
@@ -616,8 +686,8 @@ Question: {question}
                     "type": "tool_call",
                     "tool_name": action,
                     "timestamp": time.time(),
-                    "input": action_input[:500] + "..." if len(action_input) > 500 else action_input,
-                    "output": output[:500] + "..." if len(output) > 500 else output,
+                    "input": action_input,
+                    "output": output,
                     "execution_time_seconds": round(time.time() - start_time, 2)
                 }
                 self.call_sequence.append(tool_entry)
@@ -635,8 +705,8 @@ Question: {question}
                     "type": "tool_call",
                     "tool_name": action,
                     "timestamp": time.time(),
-                    "input": action_input[:500] + "..." if len(action_input) > 500 else action_input,
-                    "output": result[:500] + "..." if len(result) > 500 else result,
+                    "input": action_input,
+                    "output": result,
                     "execution_time_seconds": round(time.time() - start_time, 2)
                 }
                 self.call_sequence.append(tool_entry)
@@ -651,8 +721,8 @@ Question: {question}
                     "type": "tool_call",
                     "tool_name": action,
                     "timestamp": time.time(),
-                    "input": action_input[:500] + "..." if len(action_input) > 500 else action_input,
-                    "output": result[:500] + "..." if len(result) > 500 else result,
+                    "input": action_input,
+                    "output": result,
                     "execution_time_seconds": round(time.time() - start_time, 2)
                 }
                 self.call_sequence.append(tool_entry)
@@ -667,7 +737,7 @@ Question: {question}
                 "type": "tool_call",
                 "tool_name": action,
                 "timestamp": time.time(),
-                "input": action_input[:500] + "..." if len(action_input) > 500 else action_input,
+                "input": action_input,
                 "error": error_msg,
                 "execution_time_seconds": round(time.time() - start_time, 2)
             }
