@@ -97,24 +97,56 @@ python discord_bot.py
 2. Create a new application (or select an existing one)
 3. Go to the "Bot" section and click "Reset Token"
 4. Save the token to `token.txt` in the project directory
-5. Enable "Message Content Intent" in the Bot settings
+5. Enable "Message Content Intent" and "Server Members Intent" in the Bot settings
 6. Use the OAuth2 URL Generator to create an invite link with:
    - Scopes: `bot`
-   - Bot Permissions: `Read Messages/View Channels`, `Send Messages`, `Read Message History`
+   - Bot Permissions: `Read Messages/View Channels`, `Send Messages`, `Read Message History`, `Add Reactions`
 
 **Usage:**
 - Mention the bot in a Discord message followed by your question
 - Example: `@YourBot What is the latest news about artificial intelligence?`
 - The bot will use the ReAct agent to search and scrape information to answer your question
 
+**Colored Logging:**
+The bot provides color-coded console output for easier monitoring:
+- 🟢 **Green**: User queries from Discord
+- 🟡 **Yellow**: Tool calls (search, scrape, etc.)
+- 🔴 **Red**: Final responses sent to users
+- 🔵 **Cyan**: Evaluation logging (reactions)
+
+To see a demo of the colored logging:
+```bash
+python colored_logging_demo.py
+```
+
+**Evaluation Logging:**
+The bot supports reaction-based evaluation logging for quality tracking:
+- React with 🧪 (test tube) to a user's question to log it as an evaluation question
+- React with ✅ (check mark) to a bot's response to mark it as the accepted answer
+- Evaluation data is stored in `data/eval_qs.jsonl` for later analysis
+
+**Bot Permissions Required:**
+- Read Messages/View Channels
+- Send Messages
+- Read Message History
+- Add Reactions (for evaluation logging)
+- Use Reactions (to detect user reactions)
+
 ### Testing
 
 Run the test suite to verify the implementation:
 ```bash
-python tests/test_react_agent.py
+python tests/test_react_agent.py       # Test the ReAct agent
+python tests/test_discord_bot.py       # Test Discord bot functionality
+python tests/test_logging.py           # Test logging infrastructure
+python tests/test_colored_logging.py   # Test colored logging and reactions
 ```
 
-This will test the agent's parsing logic, tool execution, and reasoning loop without requiring API access.
+These tests verify:
+- Agent's parsing logic, tool execution, and reasoning loop
+- Discord bot async behavior and intent detection
+- Logging functionality for user queries, tool calls, and LLM interactions
+- Colored logging output and reaction-based evaluation logging
 
 ### Testing uv Virtual Environment Setup
 
@@ -171,10 +203,15 @@ Final Answer: [Comprehensive answer based on search results]
 - `react_agent.py` - Main implementation of the ReAct agent
 - `example.py` - Example usage with multiple scenarios
 - `discord_bot.py` - Discord bot wrapper for the ReAct agent
+- `colored_logging_demo.py` - Demo script showcasing colored logging
+- `data/` - Directory for evaluation logging
+  - `eval_qs.jsonl` - JSON Lines file storing evaluation questions and accepted answers
 - `tests/` - Test suite directory
   - `test_react_agent.py` - Test suite for the agent
   - `test_discord_bot.py` - Test suite for the Discord bot
   - `test_reply_chain.py` - Test suite for reply chain functionality
+  - `test_logging.py` - Test suite for logging functionality
+  - `test_colored_logging.py` - Test suite for colored logging and reactions
   - `test_uv_venv.py` - Test script for uv virtual environment setup
 - `requirements.txt` - Python dependencies
 - `.env.example` - Example environment configuration
