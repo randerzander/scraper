@@ -1,0 +1,17 @@
+# Model configuration for the Discord bot
+# This file allows you to configure which models are used for different purposes
+
+# Default model for main reasoning and agent operations
+default_model: "amazon/nova-2-lite-v1:free"
+
+# Model for intent detection (sarcastic vs serious)
+intent_detection_model: "amazon/nova-2-lite-v1:free"
+
+# Model for image captioning with vision language model
+image_caption_model: "nvidia/nemotron-nano-12b-v2-vl:free"
+
+# Model for generating concise responses
+conciseness_model: "amazon/nova-2-lite-v1:free"
+
+# Model for generating TL;DR summaries
+tldr_model: "amazon/nova-2-lite-v1:free"

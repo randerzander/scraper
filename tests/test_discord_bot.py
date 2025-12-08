@@ -214,13 +214,14 @@ def test_tldr_addition():
 
 def test_intent_detection_uses_fast_model():
     """
-    Test that intent detection uses the faster nvidia/nemotron-nano-12b-v2-vl:free model.
+    Test that intent detection uses the model from config.
     """
-    print("\nTesting that intent detection uses the faster model...")
+    print("\nTesting that intent detection uses the configured model...")
     print("="*60)
     
     with patch('discord_bot.discord.Client'), \
          patch('discord_bot.ReActAgent'), \
+         patch('discord_bot.MODEL_CONFIG', {'intent_detection_model': 'amazon/nova-2-lite-v1:free'}), \
          patch.object(ReActDiscordBot, '_call_llm') as mock_call_llm:
         
         # Create bot instance
@@ -238,13 +239,14 @@ def test_intent_detection_uses_fast_model():
         
         # Check that the model parameter was passed
         assert 'model' in call_args.kwargs, "Model parameter should be passed"
-        assert call_args.kwargs['model'] == ReActDiscordBot.INTENT_DETECTION_MODEL, \
-            f"Should use fast model, got {call_args.kwargs.get('model')}"
+        expected_model = 'amazon/nova-2-lite-v1:free'
+        assert call_args.kwargs['model'] == expected_model, \
+            f"Should use configured model, got {call_args.kwargs.get('model')}"
         
-        print(f"✓ Intent detection correctly uses {ReActDiscordBot.INTENT_DETECTION_MODEL} model")
+        print(f"✓ Intent detection correctly uses {expected_model} model")
     
     print("\n" + "="*60)
-    print("✓ Fast model test passed!")
+    print("✓ Configured model test passed!")
     print("="*60)
 
 

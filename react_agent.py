@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Simple ReAct Agent with DuckDuckGo search and URL scraping capabilities.
-Uses OpenRouter API with deepseek-r1t2-chimera:free model.
+Uses OpenRouter API with configurable models.
 """
 
 import os
@@ -10,6 +10,7 @@ import re
 import logging
 import time
 import base64
+import yaml
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 from duckduckgo_search import DDGS
@@ -30,6 +31,29 @@ logger = logging.getLogger(__name__)
 
 # Token calculation constant
 CHARS_PER_TOKEN = 4.5
+
+
+# Load model configuration
+def load_model_config():
+    """Load model configuration from model_config.yaml."""
+    config_path = Path(__file__).parent / "model_config.yaml"
+    try:
+        with open(config_path, 'r') as f:
+            return yaml.safe_load(f)
+    except FileNotFoundError:
+        logger.warning(f"Model config file not found at {config_path}, using defaults")
+        return {
+            "default_model": "amazon/nova-2-lite-v1:free",
+            "image_caption_model": "nvidia/nemotron-nano-12b-v2-vl:free"
+        }
+    except Exception as e:
+        logger.error(f"Error loading model config: {e}, using defaults")
+        return {
+            "default_model": "amazon/nova-2-lite-v1:free",
+            "image_caption_model": "nvidia/nemotron-nano-12b-v2-vl:free"
+        }
+
+MODEL_CONFIG = load_model_config()
 
 
 # Tool implementations
@@ -138,7 +162,7 @@ def image_to_base64(image_path: str) -> str:
         return base64.b64encode(f.read()).decode('utf-8')
 
 
-def caption_image_with_vlm(image_url: str, api_key: str, prompt: str = None, model: str = "nvidia/nemotron-nano-12b-v2-vl:free") -> str:
+def caption_image_with_vlm(image_url: str, api_key: str, prompt: str = None, model: str = None) -> str:
     """
     Caption an image using a Vision Language Model (VLM) via OpenRouter API.
     
@@ -146,7 +170,7 @@ def caption_image_with_vlm(image_url: str, api_key: str, prompt: str = None, mod
         image_url: URL of the image to caption
         api_key: OpenRouter API key
         prompt: Optional custom prompt for captioning. If None, uses default.
-        model: VLM model to use for captioning
+        model: VLM model to use for captioning. If None, uses config default.
         
     Returns:
         Caption text from the VLM
@@ -172,6 +196,10 @@ def caption_image_with_vlm(image_url: str, api_key: str, prompt: str = None, mod
         # Default prompt if none provided
         if prompt is None:
             prompt = "Describe this image in detail. What do you see?"
+        
+        # Use config default if model not specified
+        if model is None:
+            model = MODEL_CONFIG.get("image_caption_model", "nvidia/nemotron-nano-12b-v2-vl:free")
         
         # Prepare the API request with image
         headers = {
@@ -227,7 +255,7 @@ def caption_image_with_vlm(image_url: str, api_key: str, prompt: str = None, mod
         return f"Error captioning image: {str(e)}"
 
 
-def two_round_image_caption(image_url: str, api_key: str, user_query: str = None, model: str = "nvidia/nemotron-nano-12b-v2-vl:free") -> str:
+def two_round_image_caption(image_url: str, api_key: str, user_query: str = None, model: str = None) -> str:
     """
     Perform two-round image captioning:
     1. First round: Get a basic caption of the image
@@ -237,12 +265,16 @@ def two_round_image_caption(image_url: str, api_key: str, user_query: str = None
         image_url: URL of the image to caption
         api_key: OpenRouter API key
         user_query: User's query/question about the image
-        model: VLM model to use for captioning
+        model: VLM model to use for captioning. If None, uses config default.
         
     Returns:
         Detailed caption from the second round
     """
     try:
+        # Use config default if model not specified
+        if model is None:
+            model = MODEL_CONFIG.get("image_caption_model", "nvidia/nemotron-nano-12b-v2-vl:free")
+        
         # First round: Basic caption
         logger.info("Starting first round of image captioning...")
         basic_prompt = "Describe this image in detail. What do you see? Include objects, people, actions, colors, and setting."
@@ -294,16 +326,16 @@ class ReActAgent:
     MAX_CONTENT_LENGTH = 4000  # Maximum length of scraped content to avoid context overflow
     API_TIMEOUT = 30  # Timeout for API calls in seconds
     
-    def __init__(self, api_key: str, model: str = "x-ai/grok-4.1-fast"):
+    def __init__(self, api_key: str, model: str = None):
         """
         Initialize the ReAct agent.
         
         Args:
             api_key: OpenRouter API key
-            model: Model to use for reasoning
+            model: Model to use for reasoning. If None, uses config default.
         """
         self.api_key = api_key
-        self.model = model
+        self.model = model if model is not None else MODEL_CONFIG.get("default_model", "amazon/nova-2-lite-v1:free")
         self.api_url = "https://openrouter.ai/api/v1/chat/completions"
         
         # Define available tools

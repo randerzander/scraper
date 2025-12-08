@@ -3,3 +3,4 @@ git+https://github.com/randerzander/pyreadability.git@aed630c5a345aaf7432b16b7a4
 requests>=2.31.0
 discord.py>=2.3.0
 colorama>=0.4.6
+pyyaml>=6.0.0

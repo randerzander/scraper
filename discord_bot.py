@@ -13,6 +13,7 @@ import requests
 import json
 import logging
 import time
+import yaml
 try:
     import fcntl
     HAS_FCNTL = True
@@ -38,12 +39,37 @@ logger = logging.getLogger(__name__)
 CHARS_PER_TOKEN = 4.5
 
 
+# Load model configuration
+def load_model_config():
+    """Load model configuration from model_config.yaml."""
+    config_path = Path(__file__).parent / "model_config.yaml"
+    try:
+        with open(config_path, 'r') as f:
+            return yaml.safe_load(f)
+    except FileNotFoundError:
+        logger.warning(f"Model config file not found at {config_path}, using defaults")
+        return {
+            "default_model": "amazon/nova-2-lite-v1:free",
+            "intent_detection_model": "amazon/nova-2-lite-v1:free",
+            "image_caption_model": "nvidia/nemotron-nano-12b-v2-vl:free",
+            "conciseness_model": "amazon/nova-2-lite-v1:free",
+            "tldr_model": "amazon/nova-2-lite-v1:free"
+        }
+    except Exception as e:
+        logger.error(f"Error loading model config: {e}, using defaults")
+        return {
+            "default_model": "amazon/nova-2-lite-v1:free",
+            "intent_detection_model": "amazon/nova-2-lite-v1:free",
+            "image_caption_model": "nvidia/nemotron-nano-12b-v2-vl:free",
+            "conciseness_model": "amazon/nova-2-lite-v1:free",
+            "tldr_model": "amazon/nova-2-lite-v1:free"
+        }
+
+MODEL_CONFIG = load_model_config()
+
+
 class ReActDiscordBot:
     """Discord bot that wraps the ReAct agent."""
-    
-    # Model configuration
-    DEFAULT_MODEL = "x-ai/grok-4.1-fast"
-    INTENT_DETECTION_MODEL = "nvidia/nemotron-nano-12b-v2-vl:free"
     
     # Data directory for evaluation logging
     DATA_DIR = Path("data")
@@ -484,7 +510,7 @@ class ReActDiscordBot:
                     image_url=image_url,
                     api_key=self.api_key,
                     user_query=user_query,
-                    model="nvidia/nemotron-nano-12b-v2-vl:free"
+                    model=MODEL_CONFIG.get("image_caption_model", "nvidia/nemotron-nano-12b-v2-vl:free")
                 )
                 return result
             except Exception as e:
@@ -522,7 +548,7 @@ class ReActDiscordBot:
         Args:
             prompt: The prompt to send to the LLM
             timeout: Request timeout in seconds
-            model: Model to use. If None, uses DEFAULT_MODEL
+            model: Model to use. If None, uses config default
             
         Returns:
             The LLM's response content
@@ -535,8 +561,8 @@ class ReActDiscordBot:
             "Content-Type": "application/json"
         }
         
-        # Use specified model or default to the main reasoning model
-        model_to_use = model if model is not None else self.DEFAULT_MODEL
+        # Use specified model or default to the main reasoning model from config
+        model_to_use = model if model is not None else MODEL_CONFIG.get("default_model", "amazon/nova-2-lite-v1:free")
         
         data = {
             "model": model_to_use,
@@ -621,8 +647,8 @@ Message: "{message}"
 JSON Response:"""
         
         try:
-            # Use faster model for intent detection
-            content = self._call_llm(prompt, model=self.INTENT_DETECTION_MODEL)
+            # Use intent detection model from config
+            content = self._call_llm(prompt, model=MODEL_CONFIG.get("intent_detection_model", "amazon/nova-2-lite-v1:free"))
             
             # Extract JSON from response (handle cases with markdown code blocks)
             if "```json" in content:
@@ -661,7 +687,7 @@ Original response:
 Concise version:"""
         
         try:
-            concise_response = self._call_llm(prompt)
+            concise_response = self._call_llm(prompt, model=MODEL_CONFIG.get("conciseness_model", "amazon/nova-2-lite-v1:free"))
             return concise_response
         except Exception as e:
             print(f"Failed to make response concise: {e}")
@@ -687,7 +713,7 @@ Concise version:"""
 TL;DR:"""
             
             try:
-                tldr = self._call_llm(prompt)
+                tldr = self._call_llm(prompt, model=MODEL_CONFIG.get("tldr_model", "amazon/nova-2-lite-v1:free"))
                 # Format the response with TL;DR at the end
                 return f"{response}\n\n---\n\n**TL;DR:** {tldr}"
             except Exception as e:

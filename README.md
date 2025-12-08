@@ -51,6 +51,31 @@ cp .env.example .env
 # Edit .env and add your API key
 ```
 
+## Configuration
+
+### Model Configuration
+
+The bot uses a configurable model system. Edit `model_config.yaml` to customize which models are used for different purposes:
+
+```yaml
+# Default model for main reasoning and agent operations
+default_model: "amazon/nova-2-lite-v1:free"
+
+# Model for intent detection (sarcastic vs serious)
+intent_detection_model: "amazon/nova-2-lite-v1:free"
+
+# Model for image captioning with vision language model
+image_caption_model: "nvidia/nemotron-nano-12b-v2-vl:free"
+
+# Model for generating concise responses
+conciseness_model: "amazon/nova-2-lite-v1:free"
+
+# Model for generating TL;DR summaries
+tldr_model: "amazon/nova-2-lite-v1:free"
+```
+
+The default configuration uses `amazon/nova-2-lite-v1:free` for most operations, which provides a good balance of speed and quality. The vision model uses `nvidia/nemotron-nano-12b-v2-vl:free` for image captioning capabilities.
+
 ## Usage
 
 ### Basic Usage
