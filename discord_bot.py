@@ -19,7 +19,7 @@ class ReActDiscordBot:
     """Discord bot that wraps the ReAct agent."""
     
     # Model configuration
-    DEFAULT_MODEL = "tngtech/deepseek-r1t2-chimera:free"
+    DEFAULT_MODEL = "x-ai/grok-4.1-fast"
     INTENT_DETECTION_MODEL = "nvidia/nemotron-nano-12b-v2-vl:free"
     
     def __init__(self, token: str, api_key: str):

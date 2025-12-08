@@ -111,7 +111,7 @@ python discord_bot.py
 
 Run the test suite to verify the implementation:
 ```bash
-python test_react_agent.py
+python tests/test_react_agent.py
 ```
 
 This will test the agent's parsing logic, tool execution, and reasoning loop without requiring API access.
@@ -120,7 +120,7 @@ This will test the agent's parsing logic, tool execution, and reasoning loop wit
 
 To verify that the uv virtual environment setup works correctly:
 ```bash
-python test_uv_venv.py
+python tests/test_uv_venv.py
 ```
 
 This test script will:
@@ -171,8 +171,11 @@ Final Answer: [Comprehensive answer based on search results]
 - `react_agent.py` - Main implementation of the ReAct agent
 - `example.py` - Example usage with multiple scenarios
 - `discord_bot.py` - Discord bot wrapper for the ReAct agent
-- `test_react_agent.py` - Test suite for the agent
-- `test_uv_venv.py` - Test script for uv virtual environment setup
+- `tests/` - Test suite directory
+  - `test_react_agent.py` - Test suite for the agent
+  - `test_discord_bot.py` - Test suite for the Discord bot
+  - `test_reply_chain.py` - Test suite for reply chain functionality
+  - `test_uv_venv.py` - Test script for uv virtual environment setup
 - `requirements.txt` - Python dependencies
 - `.env.example` - Example environment configuration
 - `README.md` - This file

@@ -79,7 +79,7 @@ class ReActAgent:
     MAX_CONTENT_LENGTH = 4000  # Maximum length of scraped content to avoid context overflow
     API_TIMEOUT = 30  # Timeout for API calls in seconds
     
-    def __init__(self, api_key: str, model: str = "tngtech/deepseek-r1t2-chimera:free"):
+    def __init__(self, api_key: str, model: str = "x-ai/grok-4.1-fast"):
         """
         Initialize the ReAct agent.
         

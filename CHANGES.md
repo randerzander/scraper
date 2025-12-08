@@ -26,7 +26,7 @@ This document describes the changes made to the Discord bot to address the GitHu
 
 ### 2. Added Channel History Tool
 
-**Files Changed:** `discord_bot.py`, `test_discord_bot.py`
+**Files Changed:** `discord_bot.py`, `tests/test_discord_bot.py`
 
 **New Methods Added:**
 
@@ -63,7 +63,7 @@ This document describes the changes made to the Discord bot to address the GitHu
 
 ### 3. Test Coverage
 
-**Files Changed:** `test_discord_bot.py`
+**Files Changed:** `tests/test_discord_bot.py`
 
 **New Tests Added:**
 
@@ -110,7 +110,7 @@ The bot can now:
 ## Files Modified
 
 - `discord_bot.py`: Main implementation (2 edits for prefix removal, 4 new methods for tool)
-- `test_discord_bot.py`: Test coverage (3 new test functions)
+- `tests/test_discord_bot.py`: Test coverage (3 new test functions)
 
 ## Backward Compatibility
 

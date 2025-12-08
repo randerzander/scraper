@@ -154,7 +154,7 @@ def test_run_tests():
     # Run tests using the venv's Python
     python_executable = get_venv_python(venv_path)
     result = subprocess.run(
-        [python_executable, "test_react_agent.py"],
+        [python_executable, "tests/test_react_agent.py"],
         capture_output=True,
         text=True
     )

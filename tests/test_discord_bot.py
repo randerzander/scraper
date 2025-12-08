@@ -5,6 +5,10 @@ This script verifies that the Discord bot properly handles long-running operatio
 without blocking the event loop and correctly detects user intent.
 """
 
+import sys
+import os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 import asyncio
 import time
 import json
@@ -359,7 +363,8 @@ def test_no_answer_prefix():
     print("="*60)
     
     # Read the discord_bot.py file to verify the changes
-    with open('discord_bot.py', 'r') as f:
+    discord_bot_path = os.path.join(os.path.dirname(__file__), '..', 'discord_bot.py')
+    with open(discord_bot_path, 'r') as f:
         content = f.read()
     
     # Check that "**Answer:**\n" is not in the send calls

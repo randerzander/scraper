@@ -4,6 +4,10 @@ Test script for the ReAct agent functionality.
 This script tests the agent's parsing and reasoning logic without requiring API access.
 """
 
+import sys
+import os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 from react_agent import ReActAgent
 
 # Mock LLM response for testing

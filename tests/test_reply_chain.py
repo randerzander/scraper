@@ -5,6 +5,10 @@ This script verifies that the Discord bot properly includes reply chain context
 in prompts sent to the LLM.
 """
 
+import sys
+import os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 import asyncio
 from unittest.mock import Mock, AsyncMock, MagicMock
 from discord_bot import ReActDiscordBot
