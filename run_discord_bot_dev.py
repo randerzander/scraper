@@ -22,7 +22,6 @@ Requirements:
 import sys
 import time
 import subprocess
-import os
 import threading
 from pathlib import Path
 from watchdog.observers import Observer

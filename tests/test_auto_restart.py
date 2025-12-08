@@ -5,9 +5,7 @@ This test verifies that the file watcher can detect changes and trigger restarts
 """
 
 import unittest
-import tempfile
 import time
-import os
 from pathlib import Path
 from unittest.mock import Mock, patch
 import sys
