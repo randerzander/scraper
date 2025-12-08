@@ -35,19 +35,19 @@ CHARS_PER_TOKEN = 4.5
 
 # Load model configuration
 def load_model_config():
-    """Load model configuration from model_config.yaml."""
-    config_path = Path(__file__).parent / "model_config.yaml"
+    """Load model configuration from config.yaml."""
+    config_path = Path(__file__).parent / "config.yaml"
     try:
         with open(config_path, 'r') as f:
             return yaml.safe_load(f)
     except FileNotFoundError:
-        logger.warning(f"Model config file not found at {config_path}, using defaults")
+        logger.warning(f"Config file not found at {config_path}, using defaults")
         return {
             "default_model": "amazon/nova-2-lite-v1:free",
             "image_caption_model": "nvidia/nemotron-nano-12b-v2-vl:free"
         }
     except Exception as e:
-        logger.error(f"Error loading model config: {e}, using defaults")
+        logger.error(f"Error loading config: {e}, using defaults")
         return {
             "default_model": "amazon/nova-2-lite-v1:free",
             "image_caption_model": "nvidia/nemotron-nano-12b-v2-vl:free"

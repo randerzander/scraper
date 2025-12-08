@@ -14,3 +14,4 @@ token.txt
 =*
 data/*.jsonl
 data/query_logs/*.json
+model_config.yaml

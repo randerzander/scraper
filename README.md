@@ -53,11 +53,15 @@ cp .env.example .env
 
 ## Configuration
 
-### Model Configuration
+### Bot Configuration
 
-The bot uses a configurable model system. Edit `model_config.yaml` to customize which models are used for different purposes:
+The bot uses a configurable system. Edit `config.yaml` to customize models and bot behavior:
 
 ```yaml
+# Auto-restart when file changes are detected (default: true)
+# Set to false to disable automatic restart on code changes
+auto_restart: true
+
 # Default model for main reasoning and agent operations
 default_model: "amazon/nova-2-lite-v1:free"
 
@@ -75,6 +79,8 @@ tldr_model: "amazon/nova-2-lite-v1:free"
 ```
 
 The default configuration uses `amazon/nova-2-lite-v1:free` for most operations, which provides a good balance of speed and quality. The vision model uses `nvidia/nemotron-nano-12b-v2-vl:free` for image captioning capabilities.
+
+The `auto_restart` setting (default: `true`) enables automatic restart of the bot when `.py` or `.yaml` files are modified during development. Set to `false` to disable this feature.
 
 ## Usage
 
@@ -109,21 +115,18 @@ print(answer)
 
 Run the agent as a Discord bot that responds to mentions:
 
-**Production Mode:**
 ```bash
 python discord_bot.py
 ```
 
-**Development Mode (with auto-restart on file changes):**
-```bash
-python run_discord_bot_dev.py
-```
+By default, the bot will automatically restart when `.py` or `.yaml` files are modified (configured via `auto_restart: true` in `config.yaml`). This makes development and testing much easier.
 
-The development mode automatically restarts the bot when any `.py` or `.yaml` files are modified, making development and testing much easier.
+To disable auto-restart, set `auto_restart: false` in `config.yaml`.
 
 **Requirements:**
 1. Create a `token.txt` file in the current directory with your Discord bot token
 2. Set the `OPENROUTER_API_KEY` environment variable
+3. (Optional) Install `watchdog` for auto-restart functionality: `pip install watchdog`
 
 **How to get a Discord bot token:**
 1. Go to [Discord Developer Portal](https://discord.com/developers/applications)

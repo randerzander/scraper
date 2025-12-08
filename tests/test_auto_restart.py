@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Test script for the auto-restart development mode.
+Test script for the auto-restart functionality.
 This test verifies that the file watcher can detect changes and trigger restarts.
 """
 
@@ -10,12 +10,39 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 import sys
 
-# Add parent directory to path to import run_discord_bot_dev
+# Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from run_discord_bot_dev import BotRestartHandler, BotRunner
+# Import only what we need - the auto-restart classes are conditionally defined
+# We need to check if watchdog is available
+try:
+    from watchdog.observers import Observer
+    from watchdog.events import FileSystemEventHandler
+    
+    # Now we can import from discord_bot - need to do it carefully
+    # to avoid importing discord which may not be installed
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("discord_bot", 
+                                                   Path(__file__).parent.parent / "discord_bot.py")
+    discord_bot_module = importlib.util.module_from_spec(spec)
+    
+    # Mock discord and other heavy dependencies before loading
+    sys.modules['discord'] = Mock()
+    sys.modules['discord.Intents'] = Mock()
+    sys.modules['discord.Client'] = Mock()
+    
+    spec.loader.exec_module(discord_bot_module)
+    
+    BotRestartHandler = discord_bot_module.BotRestartHandler
+    BotRunner = discord_bot_module.BotRunner
+    HAS_AUTO_RESTART = True
+except ImportError:
+    HAS_AUTO_RESTART = False
+    BotRestartHandler = None
+    BotRunner = None
 
 
+@unittest.skipUnless(HAS_AUTO_RESTART, "Auto-restart functionality not available (watchdog not installed)")
 class TestAutoRestart(unittest.TestCase):
     """Test cases for auto-restart functionality."""
     

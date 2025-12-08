@@ -1,5 +1,10 @@
-# Model configuration for the Discord bot
+# Configuration for the Discord bot
 # This file allows you to configure which models are used for different purposes
+# and bot behavior settings
+
+# Auto-restart when file changes are detected (default: true)
+# Set to false to disable automatic restart on code changes
+auto_restart: true
 
 # Default model for main reasoning and agent operations
 default_model: "amazon/nova-2-lite-v1:free"
