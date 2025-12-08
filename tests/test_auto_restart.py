@@ -121,6 +121,8 @@ class TestAutoRestart(unittest.TestCase):
         runner = BotRunner()
         self.assertIsNone(runner.process)
         self.assertTrue(runner.should_run)
+        self.assertEqual(runner.restart_count, 0)
+        self.assertEqual(runner.max_consecutive_restarts, 5)
     
     @patch('subprocess.Popen')
     def test_bot_runner_start_bot(self, mock_popen):
@@ -174,6 +176,30 @@ class TestAutoRestart(unittest.TestCase):
         # Verify terminate was called and Popen was called again
         mock_process.terminate.assert_called_once()
         self.assertEqual(mock_popen.call_count, initial_call_count + 1)
+    
+    @patch('subprocess.Popen')
+    @patch('time.sleep')
+    def test_bot_runner_restart_limit(self, mock_sleep, mock_popen):
+        """Test that BotRunner limits rapid consecutive restarts."""
+        # Setup mock process
+        mock_process = Mock()
+        mock_process.poll.return_value = None
+        mock_process.stdout = None
+        mock_popen.return_value = mock_process
+        
+        runner = BotRunner()
+        runner.max_consecutive_restarts = 3  # Lower limit for testing
+        runner.restart_reset_time = 100  # Long reset time so it doesn't reset during test
+        
+        # Restart multiple times rapidly
+        for i in range(4):
+            runner.start_bot()
+            time.sleep(0.01)  # Small delay to simulate rapid restarts
+        
+        # Should have triggered the restart limit warning (30 second sleep)
+        # Check if sleep was called with 30 seconds
+        sleep_calls = [call[0][0] for call in mock_sleep.call_args_list]
+        self.assertIn(30, sleep_calls, "Expected 30 second sleep for restart limit")
 
 
 class TestWatchdogImport(unittest.TestCase):

@@ -2,12 +2,28 @@
 """
 Development mode runner for discord_bot.py with auto-restart on file changes.
 This script watches for changes in .py and .yaml files and automatically restarts the bot.
+
+Usage:
+    python run_discord_bot_dev.py
+
+Features:
+    - Automatically restarts the bot when .py or .yaml files are modified
+    - Debounces rapid changes to avoid multiple restarts
+    - Graceful shutdown with Ctrl+C
+    - Real-time output from the bot
+    - Prevents infinite restart loops with exponential backoff
+
+Requirements:
+    - token.txt file with Discord bot token
+    - OPENROUTER_API_KEY environment variable set
+    - watchdog package installed (pip install watchdog)
 """
 
 import sys
 import time
 import subprocess
 import os
+import threading
 from pathlib import Path
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
@@ -41,11 +57,43 @@ class BotRunner:
     def __init__(self):
         self.process = None
         self.should_run = True
+        self.output_thread = None
+        self.restart_count = 0
+        self.last_restart_time = 0
+        self.max_consecutive_restarts = 5
+        self.restart_reset_time = 60  # Reset restart count after 60 seconds of successful running
+        
+    def _read_output(self):
+        """Read and print output from the bot process in a separate thread."""
+        if self.process and self.process.stdout:
+            try:
+                for line in iter(self.process.stdout.readline, ''):
+                    if line and self.should_run:
+                        print(line, end='')
+                    if self.process.poll() is not None:
+                        # Process ended
+                        break
+            except Exception as e:
+                print(f"Error reading output: {e}")
         
     def start_bot(self):
         """Start the Discord bot process."""
         if self.process is not None:
             self.stop_bot()
+        
+        # Check if we're restarting too frequently
+        current_time = time.time()
+        if current_time - self.last_restart_time > self.restart_reset_time:
+            # Reset restart count if enough time has passed
+            self.restart_count = 0
+        
+        if self.restart_count >= self.max_consecutive_restarts:
+            print(f"\n⚠️  Bot has restarted {self.restart_count} times in quick succession.")
+            print("⚠️  There may be a persistent issue preventing the bot from starting.")
+            print("⚠️  Please check the error messages above and fix the issue.")
+            print("⚠️  The development runner will pause for 30 seconds before trying again...")
+            time.sleep(30)
+            self.restart_count = 0
         
         print("🚀 Starting Discord bot...")
         self.process = subprocess.Popen(
@@ -56,14 +104,12 @@ class BotRunner:
             bufsize=1
         )
         
-        # Print bot output in real-time
-        if self.process.stdout:
-            for line in iter(self.process.stdout.readline, ''):
-                if line and self.process.poll() is None:
-                    print(line, end='')
-                elif self.process.poll() is not None:
-                    # Process ended
-                    break
+        self.last_restart_time = current_time
+        self.restart_count += 1
+        
+        # Start output reading in a separate thread to avoid blocking
+        self.output_thread = threading.Thread(target=self._read_output, daemon=True)
+        self.output_thread.start()
     
     def stop_bot(self):
         """Stop the Discord bot process."""
@@ -117,9 +163,16 @@ def main():
             
             # Check if bot process died unexpectedly
             if runner.process is not None and runner.process.poll() is not None:
-                print("\n⚠️  Bot process ended unexpectedly. Restarting...")
-                time.sleep(2)
-                runner.restart_bot()
+                # Process ended unexpectedly
+                exit_code = runner.process.poll()
+                if exit_code != 0:
+                    print(f"\n⚠️  Bot process ended with exit code {exit_code}. Restarting...")
+                    time.sleep(2)
+                    runner.restart_bot()
+                else:
+                    # Clean exit, don't restart
+                    print("\n✅ Bot process ended cleanly.")
+                    runner.should_run = False
                 
     except KeyboardInterrupt:
         print("\n\n🛑 Shutting down...")
