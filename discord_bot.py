@@ -137,7 +137,8 @@ class ReActDiscordBot:
             
             # Reverse to get chronological order (oldest first)
             chain.reverse()
-            reply_image_urls.reverse()  # Also reverse image URLs to match chronological order
+            # Also reverse image URLs to match chronological order (oldest first)
+            reply_image_urls.reverse()
             
             reply_text = ""
             if chain:
