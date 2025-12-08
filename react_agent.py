@@ -219,8 +219,8 @@ def caption_image_with_vlm(image_url: str, api_key: str, prompt: str = None, mod
         # Clean up the downloaded image
         try:
             os.remove(image_path)
-        except Exception:
-            pass
+        except (FileNotFoundError, PermissionError) as e:
+            logger.warning(f"Failed to clean up temporary image {image_path}: {str(e)}")
         
         return content
     except Exception as e:
@@ -246,7 +246,11 @@ def two_round_image_caption(image_url: str, api_key: str, user_query: str = None
         # First round: Basic caption
         logger.info("Starting first round of image captioning...")
         basic_prompt = "Describe this image in detail. What do you see? Include objects, people, actions, colors, and setting."
-        first_caption = caption_image_with_vlm(image_url, api_key, basic_prompt, model)
+        
+        try:
+            first_caption = caption_image_with_vlm(image_url, api_key, basic_prompt, model)
+        except Exception as e:
+            return f"Error in first round of captioning: {str(e)}"
         
         logger.info(f"First round caption: {first_caption[:100]}...")
         
@@ -265,7 +269,10 @@ Now, provide a more detailed analysis of the image, paying particular attention 
 
 Now, provide additional details about the image that weren't covered in the first description. Focus on fine details, context, and any notable aspects."""
         
-        second_caption = caption_image_with_vlm(image_url, api_key, second_prompt, model)
+        try:
+            second_caption = caption_image_with_vlm(image_url, api_key, second_prompt, model)
+        except Exception as e:
+            return f"Error in second round of captioning: {str(e)}\n\nFirst round result: {first_caption}"
         
         logger.info(f"Second round caption: {second_caption[:100]}...")
         

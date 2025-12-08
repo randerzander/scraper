@@ -8,7 +8,7 @@ import sys
 import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
 from react_agent import download_image, image_to_base64, caption_image_with_vlm, two_round_image_caption
 import tempfile
 
@@ -166,7 +166,8 @@ def test_two_round_captioning():
         # The calls are made with kwargs, so we check kwargs
         if len(mock_caption.call_args_list) >= 2:
             # Get kwargs from the second call
-            second_call_kwargs = mock_caption.call_args_list[1][1] if len(mock_caption.call_args_list[1]) > 1 else {}
+            second_call = mock_caption.call_args_list[1]
+            second_call_kwargs = second_call[1] if len(second_call) > 1 else {}
             if 'prompt' in second_call_kwargs:
                 second_call_prompt = second_call_kwargs['prompt']
                 print(f"\n  Second round prompt includes user query: {'What color is the cat?' in second_call_prompt}")
