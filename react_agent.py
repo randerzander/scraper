@@ -538,8 +538,8 @@ Question: {question}
                 "type": "llm_call",
                 "model": self.model,
                 "timestamp": time.time(),
-                "input": prompt[:500] + "..." if len(prompt) > 500 else prompt,
-                "output": content[:500] + "..." if len(content) > 500 else content,
+                "input": prompt,
+                "output": content,
                 "input_tokens": input_tokens,
                 "output_tokens": output_tokens,
                 "response_time_seconds": round(response_time, 2),
@@ -569,7 +569,7 @@ Question: {question}
                 "type": "llm_call",
                 "model": self.model,
                 "timestamp": time.time(),
-                "input": prompt[:500] + "..." if len(prompt) > 500 else prompt,
+                "input": prompt,
                 "error": str(e),
                 "response_time_seconds": round(response_time, 2)
             }
@@ -637,7 +637,7 @@ Question: {question}
                 "type": "tool_call",
                 "tool_name": action,
                 "timestamp": time.time(),
-                "input": action_input[:500] + "..." if len(action_input) > 500 else action_input,
+                "input": action_input,
                 "error": error_msg
             }
             self.call_sequence.append(tool_entry)
@@ -668,7 +668,7 @@ Question: {question}
                             "type": "tool_call",
                             "tool_name": action,
                             "timestamp": time.time(),
-                            "input": action_input[:500] + "..." if len(action_input) > 500 else action_input,
+                            "input": action_input,
                             "error": r["error"],
                             "execution_time_seconds": round(time.time() - start_time, 2)
                         }
@@ -686,8 +686,8 @@ Question: {question}
                     "type": "tool_call",
                     "tool_name": action,
                     "timestamp": time.time(),
-                    "input": action_input[:500] + "..." if len(action_input) > 500 else action_input,
-                    "output": output[:500] + "..." if len(output) > 500 else output,
+                    "input": action_input,
+                    "output": output,
                     "execution_time_seconds": round(time.time() - start_time, 2)
                 }
                 self.call_sequence.append(tool_entry)
@@ -705,8 +705,8 @@ Question: {question}
                     "type": "tool_call",
                     "tool_name": action,
                     "timestamp": time.time(),
-                    "input": action_input[:500] + "..." if len(action_input) > 500 else action_input,
-                    "output": result[:500] + "..." if len(result) > 500 else result,
+                    "input": action_input,
+                    "output": result,
                     "execution_time_seconds": round(time.time() - start_time, 2)
                 }
                 self.call_sequence.append(tool_entry)
@@ -721,8 +721,8 @@ Question: {question}
                     "type": "tool_call",
                     "tool_name": action,
                     "timestamp": time.time(),
-                    "input": action_input[:500] + "..." if len(action_input) > 500 else action_input,
-                    "output": result[:500] + "..." if len(result) > 500 else result,
+                    "input": action_input,
+                    "output": result,
                     "execution_time_seconds": round(time.time() - start_time, 2)
                 }
                 self.call_sequence.append(tool_entry)
@@ -737,7 +737,7 @@ Question: {question}
                 "type": "tool_call",
                 "tool_name": action,
                 "timestamp": time.time(),
-                "input": action_input[:500] + "..." if len(action_input) > 500 else action_input,
+                "input": action_input,
                 "error": error_msg,
                 "execution_time_seconds": round(time.time() - start_time, 2)
             }
