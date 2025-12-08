@@ -116,14 +116,14 @@ def read_file(filepath: str) -> str:
         Content of the file or error message
     """
     try:
-        # Get the current working directory
-        cwd = Path.cwd()
+        # Get the current working directory (fully resolved)
+        cwd = Path.cwd().resolve()
         
-        # Resolve the file path relative to cwd
+        # Resolve the file path relative to cwd (this also resolves symlinks)
         file_path = (cwd / filepath).resolve()
         
         # Security check: ensure the resolved path is within cwd
-        # This prevents directory traversal attacks
+        # This prevents directory traversal attacks and symlink-based bypasses
         try:
             file_path.relative_to(cwd)
         except ValueError:
