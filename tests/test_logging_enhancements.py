@@ -231,12 +231,14 @@ def test_discord_bot_query_logging():
             }
         }
         
-        bot._save_query_log("123456", "Test question?", "Test answer")
+        bot._save_query_log("123456", "Test question?", "Test answer", "TestUser")
         
-        # Verify log file was created
-        log_files = list(bot.QUERY_LOGS_DIR.glob("query_*.json"))
+        # Verify log file was created with new naming format (username_timestamp.json)
+        log_files = list(bot.QUERY_LOGS_DIR.glob("*.json"))
         assert len(log_files) == 1, "Should create one log file"
-        print(f"✓ Log file created: {log_files[0].name}")
+        # Check that filename starts with username (TestUser)
+        assert log_files[0].name.startswith("TestUser_"), f"Filename should start with username, got: {log_files[0].name}"
+        print(f"✓ Log file created with username-based naming: {log_files[0].name}")
         
         # Test 3: Verify log file contents
         print("\nTest 3: Verify log file contents")
@@ -245,6 +247,8 @@ def test_discord_bot_query_logging():
         
         assert "message_id" in log_data, "Should have message_id"
         assert log_data["message_id"] == "123456", "Should have correct message_id"
+        assert "username" in log_data, "Should have username"
+        assert log_data["username"] == "TestUser", "Should have correct username"
         assert "timestamp" in log_data, "Should have timestamp"
         assert "user_query" in log_data, "Should have user_query"
         assert "final_response" in log_data, "Should have final_response"
@@ -264,6 +268,7 @@ def test_discord_bot_query_logging():
         
         print("✓ Log file contents are correct")
         print(f"  - Message ID: {log_data['message_id']}")
+        print(f"  - Username: {log_data['username']}")
         print(f"  - Call sequence length: {len(log_data['call_sequence'])}")
         print(f"  - Models tracked: {list(log_data['token_stats_by_model'].keys())}")
     
@@ -323,6 +328,82 @@ def test_llm_call_tracking_in_discord_bot():
     print("="*60)
 
 
+def test_query_log_filename_edge_cases():
+    """
+    Test that query log filenames handle edge cases properly.
+    """
+    print("\nTesting query log filename edge cases...")
+    print("="*60)
+    
+    with patch('discord_bot.discord.Client') as MockClient, \
+         patch('discord_bot.ReActAgent') as MockAgent, \
+         tempfile.TemporaryDirectory() as tmpdir:
+        
+        # Create mock agent
+        mock_agent_instance = Mock()
+        mock_agent_instance.get_tracking_data.return_value = {
+            "call_sequence": [],
+            "token_stats": {}
+        }
+        mock_agent_instance.reset_tracking = Mock()
+        MockAgent.return_value = mock_agent_instance
+        
+        # Create bot instance with temporary directory
+        bot = ReActDiscordBot("test_token", "test_api_key")
+        bot.QUERY_LOGS_DIR = Path(tmpdir) / "query_logs"
+        bot.QUERY_LOGS_DIR.mkdir(exist_ok=True)
+        
+        # Test 1: Empty username
+        print("\nTest 1: Test empty username handling")
+        bot._save_query_log("123", "Test?", "Answer", "")
+        log_files = list(bot.QUERY_LOGS_DIR.glob("*.json"))
+        assert len(log_files) == 1, "Should create one log file"
+        assert log_files[0].name.startswith("unknown_user_"), f"Empty username should use 'unknown_user', got: {log_files[0].name}"
+        print(f"✓ Empty username handled correctly: {log_files[0].name}")
+        
+        # Clean up
+        log_files[0].unlink()
+        
+        # Test 2: Username with special characters
+        print("\nTest 2: Test username with special characters")
+        bot._save_query_log("124", "Test?", "Answer", "John@Doe#123!")
+        log_files = list(bot.QUERY_LOGS_DIR.glob("*.json"))
+        assert len(log_files) == 1, "Should create one log file"
+        # Should sanitize special chars to underscores
+        assert "John_Doe_123_" in log_files[0].name, f"Should sanitize special chars, got: {log_files[0].name}"
+        print(f"✓ Special characters sanitized correctly: {log_files[0].name}")
+        
+        # Clean up
+        log_files[0].unlink()
+        
+        # Test 3: Very long username
+        print("\nTest 3: Test very long username (truncation)")
+        long_username = "A" * 100  # 100 characters
+        bot._save_query_log("125", "Test?", "Answer", long_username)
+        log_files = list(bot.QUERY_LOGS_DIR.glob("*.json"))
+        assert len(log_files) == 1, "Should create one log file"
+        # Username should be truncated to 50 chars
+        filename_parts = log_files[0].stem.split('_')
+        username_part = filename_parts[0]
+        assert len(username_part) <= 50, f"Username should be truncated to 50 chars, got {len(username_part)}"
+        print(f"✓ Long username truncated correctly: {len(username_part)} characters")
+        
+        # Clean up
+        log_files[0].unlink()
+        
+        # Test 4: Username with only special characters
+        print("\nTest 4: Test username with only special characters")
+        bot._save_query_log("126", "Test?", "Answer", "!@#$%^&*()")
+        log_files = list(bot.QUERY_LOGS_DIR.glob("*.json"))
+        assert len(log_files) == 1, "Should create one log file"
+        assert log_files[0].name.startswith("unknown_user_"), f"Special-only username should use 'unknown_user', got: {log_files[0].name}"
+        print(f"✓ Special-only username handled correctly: {log_files[0].name}")
+    
+    print("\n" + "="*60)
+    print("✓ Query log filename edge cases test passed!")
+    print("="*60)
+
+
 if __name__ == "__main__":
     print("Discord Bot Logging Enhancements Tests")
     print("="*60)
@@ -341,6 +422,9 @@ if __name__ == "__main__":
     
     # Test 5: Discord bot LLM call tracking
     test_llm_call_tracking_in_discord_bot()
+    
+    # Test 6: Query log filename edge cases
+    test_query_log_filename_edge_cases()
     
     print("\n" + "="*60)
     print("✓ ALL LOGGING ENHANCEMENT TESTS PASSED!")

@@ -7,6 +7,7 @@ The bot's token should be in a file named 'token.txt' in the current working dir
 """
 
 import os
+import sys
 import asyncio
 import discord
 import requests
@@ -14,6 +15,8 @@ import json
 import logging
 import time
 import yaml
+import subprocess
+import threading
 try:
     import fcntl
     HAS_FCNTL = True
@@ -39,16 +42,17 @@ logger = logging.getLogger(__name__)
 CHARS_PER_TOKEN = 4.5
 
 
-# Load model configuration
-def load_model_config():
-    """Load model configuration from model_config.yaml."""
-    config_path = Path(__file__).parent / "model_config.yaml"
+# Load bot configuration
+def load_config():
+    """Load bot configuration from config.yaml."""
+    config_path = Path(__file__).parent / "config.yaml"
     try:
         with open(config_path, 'r') as f:
             return yaml.safe_load(f)
     except FileNotFoundError:
-        logger.warning(f"Model config file not found at {config_path}, using defaults")
+        logger.warning(f"Config file not found at {config_path}, using defaults")
         return {
+            "auto_restart": True,
             "default_model": "amazon/nova-2-lite-v1:free",
             "intent_detection_model": "amazon/nova-2-lite-v1:free",
             "image_caption_model": "nvidia/nemotron-nano-12b-v2-vl:free",
@@ -56,8 +60,9 @@ def load_model_config():
             "tldr_model": "amazon/nova-2-lite-v1:free"
         }
     except Exception as e:
-        logger.error(f"Error loading model config: {e}, using defaults")
+        logger.error(f"Error loading config: {e}, using defaults")
         return {
+            "auto_restart": True,
             "default_model": "amazon/nova-2-lite-v1:free",
             "intent_detection_model": "amazon/nova-2-lite-v1:free",
             "image_caption_model": "nvidia/nemotron-nano-12b-v2-vl:free",
@@ -65,7 +70,8 @@ def load_model_config():
             "tldr_model": "amazon/nova-2-lite-v1:free"
         }
 
-MODEL_CONFIG = load_model_config()
+CONFIG = load_config()
+MODEL_CONFIG = CONFIG  # Alias for backward compatibility
 
 
 class ReActDiscordBot:
@@ -323,7 +329,7 @@ class ReActDiscordBot:
                         await message.channel.send(answer)
                     
                     # Save query log after successful response
-                    self._save_query_log(str(message.id), question, complete_answer)
+                    self._save_query_log(str(message.id), question, complete_answer, message.author.display_name)
                 
                 except Exception as e:
                     # Unregister channel history tool in case of error
@@ -858,7 +864,7 @@ TL;DR:"""
         except Exception as e:
             logger.error(f"Failed to log accepted answer: {str(e)}")
     
-    def _save_query_log(self, message_id: str, user_query: str, final_response: str):
+    def _save_query_log(self, message_id: str, user_query: str, final_response: str, username: str):
         """
         Save the query log to a JSON file in the query_logs directory.
         
@@ -866,6 +872,7 @@ TL;DR:"""
             message_id: Discord message ID
             user_query: The user's query
             final_response: The final response from the bot
+            username: Username of the person who submitted the query
         """
         try:
             # Get tracking data from agent
@@ -891,6 +898,7 @@ TL;DR:"""
             # Create the log entry
             log_entry = {
                 "message_id": message_id,
+                "username": username,
                 "timestamp": datetime.now().isoformat(),
                 "user_query": user_query,
                 "final_response": final_response[:1000] + "..." if len(final_response) > 1000 else final_response,
@@ -898,9 +906,17 @@ TL;DR:"""
                 "token_stats_by_model": merged_token_stats
             }
             
-            # Save to file with timestamp in filename
+            # Save to file with username and timestamp in filename
+            # Format: username_YYYYMMDD_HHMMSS.json
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"query_{message_id}_{timestamp}.json"
+            # Sanitize username to be filesystem-safe (replace spaces and special chars with underscore)
+            safe_username = "".join(c if c.isalnum() or c in ('-', '_') else '_' for c in username)
+            # Handle empty username and limit length to prevent filesystem issues
+            if not safe_username or safe_username.replace('_', '') == '':
+                safe_username = "unknown_user"
+            # Limit username to 50 characters to prevent excessively long filenames
+            safe_username = safe_username[:50]
+            filename = f"{safe_username}_{timestamp}.json"
             filepath = self.QUERY_LOGS_DIR / filename
             
             with open(filepath, 'w', encoding='utf-8') as f:
@@ -934,6 +950,188 @@ TL;DR:"""
         """Start the Discord bot."""
         print("Starting Discord bot...")
         self.client.run(self.token)
+
+
+# Auto-restart functionality classes
+try:
+    from watchdog.observers import Observer
+    from watchdog.events import FileSystemEventHandler
+    HAS_WATCHDOG = True
+except ImportError:
+    HAS_WATCHDOG = False
+    logger.warning("watchdog not installed, auto-restart functionality disabled")
+
+
+if HAS_WATCHDOG:
+    class BotRestartHandler(FileSystemEventHandler):
+        """Handler that restarts the bot when Python or YAML files change."""
+        
+        def __init__(self, restart_callback):
+            self.restart_callback = restart_callback
+            self.last_restart = 0
+            self.debounce_seconds = 2  # Wait 2 seconds before restarting to avoid multiple restarts
+            
+        def on_modified(self, event):
+            """Called when a file is modified."""
+            if event.is_directory:
+                return
+                
+            # Only restart for .py and .yaml files
+            if event.src_path.endswith(('.py', '.yaml', '.yml')):
+                current_time = time.time()
+                # Debounce: only restart if it's been at least debounce_seconds since last restart
+                if current_time - self.last_restart >= self.debounce_seconds:
+                    print(f"\n🔄 Detected change in: {event.src_path}")
+                    print("🔄 Restarting bot...")
+                    self.last_restart = current_time
+                    self.restart_callback()
+
+    class BotRunner:
+        """Manages running and restarting the Discord bot process."""
+        
+        def __init__(self):
+            self.process = None
+            self.should_run = True
+            self.output_thread = None
+            self.restart_count = 0
+            self.last_restart_time = 0
+            self.max_consecutive_restarts = 5
+            self.restart_reset_time = 60  # Reset restart count after 60 seconds of successful running
+            
+        def _read_output(self):
+            """Read and print output from the bot process in a separate thread."""
+            if self.process and self.process.stdout:
+                try:
+                    for line in iter(self.process.stdout.readline, ''):
+                        if line and self.should_run:
+                            print(line, end='')
+                        if self.process.poll() is not None:
+                            # Process ended
+                            break
+                except Exception as e:
+                    print(f"Error reading output: {e}")
+            
+        def start_bot(self, is_restart=False):
+            """Start the Discord bot process.
+            
+            Args:
+                is_restart: True if this is a restart, False for initial start
+            """
+            if self.process is not None:
+                self.stop_bot()
+            
+            # Check if we're restarting too frequently (only for restarts, not initial start)
+            if is_restart:
+                current_time = time.time()
+                if current_time - self.last_restart_time > self.restart_reset_time:
+                    # Reset restart count if enough time has passed
+                    self.restart_count = 0
+                
+                if self.restart_count >= self.max_consecutive_restarts:
+                    print(f"\n⚠️  Bot has restarted {self.restart_count} times in quick succession.")
+                    print("⚠️  There may be a persistent issue preventing the bot from starting.")
+                    print("⚠️  Please check the error messages above and fix the issue.")
+                    print("⚠️  The bot will pause for 30 seconds before trying again...")
+                    time.sleep(30)
+                    self.restart_count = 0
+                
+                self.last_restart_time = current_time
+                self.restart_count += 1
+            
+            print("🚀 Starting Discord bot...")
+            # Create environment with DISCORD_BOT_SUBPROCESS flag to prevent nested auto-restart
+            env = os.environ.copy()
+            env["DISCORD_BOT_SUBPROCESS"] = "1"
+            
+            # Use absolute path to ensure script can be found from any directory
+            script_path = Path(__file__).absolute()
+            
+            self.process = subprocess.Popen(
+                [sys.executable, str(script_path)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                env=env
+            )
+            
+            # Start output reading in a separate thread to avoid blocking
+            self.output_thread = threading.Thread(target=self._read_output, daemon=True)
+            self.output_thread.start()
+        
+        def stop_bot(self):
+            """Stop the Discord bot process."""
+            if self.process is not None and self.process.poll() is None:
+                print("\n🛑 Stopping bot...")
+                self.process.terminate()
+                try:
+                    self.process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    print("⚠️  Bot didn't stop gracefully, forcing...")
+                    self.process.kill()
+                    self.process.wait()
+                self.process = None
+        
+        def restart_bot(self):
+            """Restart the Discord bot process."""
+            self.stop_bot()
+            time.sleep(1)  # Brief pause before restart
+            if self.should_run:
+                self.start_bot(is_restart=True)
+
+
+def run_with_auto_restart():
+    """Run the bot with auto-restart functionality."""
+    print("="*80)
+    print("🤖 Discord Bot with Auto-Restart Enabled")
+    print("="*80)
+    print("\nThe bot will automatically restart when .py or .yaml files change.")
+    print("Press Ctrl+C to stop.\n")
+    
+    # Get the current directory
+    watch_path = Path.cwd()
+    
+    # Create bot runner
+    runner = BotRunner()
+    
+    # Create file system event handler
+    event_handler = BotRestartHandler(runner.restart_bot)
+    
+    # Create observer
+    observer = Observer()
+    observer.schedule(event_handler, str(watch_path), recursive=True)
+    observer.start()
+    
+    try:
+        # Start the bot
+        runner.start_bot()
+        
+        # Keep the script running
+        while runner.should_run:
+            time.sleep(1)
+            
+            # Check if bot process died unexpectedly
+            if runner.process is not None:
+                exit_code = runner.process.poll()
+                if exit_code is not None:
+                    # Process ended
+                    if exit_code != 0:
+                        print(f"\n⚠️  Bot process ended with exit code {exit_code}. Restarting...")
+                        time.sleep(2)
+                        runner.restart_bot()
+                    else:
+                        # Clean exit, don't restart
+                        print("\n✅ Bot process ended cleanly.")
+                        runner.should_run = False
+                
+    except KeyboardInterrupt:
+        print("\n\n🛑 Shutting down...")
+        runner.should_run = False
+        runner.stop_bot()
+        observer.stop()
+    
+    observer.join()
+    print("👋 Goodbye!")
 
 
 def main():
@@ -988,9 +1186,22 @@ def main():
         print("="*80)
         return
     
-    # Create and run the bot
-    bot = ReActDiscordBot(token, api_key)
-    bot.run()
+    # Check if auto-restart is enabled in config
+    auto_restart = CONFIG.get("auto_restart", True)
+    
+    # If running as a subprocess (from auto-restart wrapper), run normally
+    # Otherwise check if auto-restart should be enabled
+    if auto_restart and HAS_WATCHDOG and not os.environ.get("DISCORD_BOT_SUBPROCESS"):
+        # Run with auto-restart wrapper
+        run_with_auto_restart()
+    else:
+        # Create and run the bot normally
+        if auto_restart and not HAS_WATCHDOG:
+            print("⚠️  Auto-restart is enabled in config.yaml but watchdog is not installed.")
+            print("⚠️  Install watchdog with: pip install watchdog")
+            print("⚠️  Running without auto-restart...\n")
+        bot = ReActDiscordBot(token, api_key)
+        bot.run()
 
 
 if __name__ == "__main__":
