@@ -18,6 +18,10 @@ from react_agent import ReActAgent
 class ReActDiscordBot:
     """Discord bot that wraps the ReAct agent."""
     
+    # Model configuration
+    DEFAULT_MODEL = "tngtech/deepseek-r1t2-chimera:free"
+    INTENT_DETECTION_MODEL = "nvidia/nemotron-nano-12b-v2-vl:free"
+    
     def __init__(self, token: str, api_key: str):
         """
         Initialize the Discord bot with ReAct agent.
@@ -202,7 +206,7 @@ class ReActDiscordBot:
         Args:
             prompt: The prompt to send to the LLM
             timeout: Request timeout in seconds
-            model: Optional model to use. If None, uses default model
+            model: Model to use. If None, uses DEFAULT_MODEL
             
         Returns:
             The LLM's response content
@@ -216,7 +220,7 @@ class ReActDiscordBot:
         }
         
         # Use specified model or default to the main reasoning model
-        model_to_use = model if model else "tngtech/deepseek-r1t2-chimera:free"
+        model_to_use = model if model is not None else self.DEFAULT_MODEL
         
         data = {
             "model": model_to_use,
@@ -256,7 +260,7 @@ JSON Response:"""
         
         try:
             # Use faster model for intent detection
-            content = self._call_llm(prompt, model="nvidia/nemotron-nano-12b-v2-vl:free")
+            content = self._call_llm(prompt, model=self.INTENT_DETECTION_MODEL)
             
             # Extract JSON from response (handle cases with markdown code blocks)
             if "```json" in content:

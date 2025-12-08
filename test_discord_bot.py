@@ -232,10 +232,10 @@ def test_intent_detection_uses_fast_model():
         
         # Check that the model parameter was passed
         assert 'model' in call_args.kwargs, "Model parameter should be passed"
-        assert call_args.kwargs['model'] == "nvidia/nemotron-nano-12b-v2-vl:free", \
+        assert call_args.kwargs['model'] == ReActDiscordBot.INTENT_DETECTION_MODEL, \
             f"Should use fast model, got {call_args.kwargs.get('model')}"
         
-        print("✓ Intent detection correctly uses nvidia/nemotron-nano-12b-v2-vl:free model")
+        print(f"✓ Intent detection correctly uses {ReActDiscordBot.INTENT_DETECTION_MODEL} model")
     
     print("\n" + "="*60)
     print("✓ Fast model test passed!")
