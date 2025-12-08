@@ -1043,8 +1043,11 @@ if HAS_WATCHDOG:
             env = os.environ.copy()
             env["DISCORD_BOT_SUBPROCESS"] = "1"
             
+            # Use absolute path to ensure script can be found from any directory
+            script_path = Path(__file__).absolute()
+            
             self.process = subprocess.Popen(
-                [sys.executable, __file__],
+                [sys.executable, str(script_path)],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
