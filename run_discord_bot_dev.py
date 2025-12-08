@@ -11,7 +11,7 @@ Features:
     - Debounces rapid changes to avoid multiple restarts
     - Graceful shutdown with Ctrl+C
     - Real-time output from the bot
-    - Prevents infinite restart loops with exponential backoff
+    - Prevents infinite restart loops with fixed cooldown period
 
 Requirements:
     - token.txt file with Discord bot token
