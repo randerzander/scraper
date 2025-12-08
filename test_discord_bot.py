@@ -206,6 +206,43 @@ def test_tldr_addition():
     print("="*60)
 
 
+def test_intent_detection_uses_fast_model():
+    """
+    Test that intent detection uses the faster nvidia/nemotron-nano-12b-v2-vl:free model.
+    """
+    print("\nTesting that intent detection uses the faster model...")
+    print("="*60)
+    
+    with patch('discord_bot.discord.Client'), \
+         patch('discord_bot.ReActAgent'), \
+         patch.object(ReActDiscordBot, '_call_llm') as mock_call_llm:
+        
+        # Create bot instance
+        bot = ReActDiscordBot("test_token", "test_api_key")
+        
+        # Set up mock to return valid JSON
+        mock_call_llm.return_value = '{"is_sarcastic": false, "confidence": "high"}'
+        
+        # Call intent detection
+        result = bot._detect_intent("Test message")
+        
+        # Verify _call_llm was called with the correct model
+        mock_call_llm.assert_called_once()
+        call_args = mock_call_llm.call_args
+        
+        # Check that the model parameter was passed
+        assert 'model' in call_args.kwargs, "Model parameter should be passed"
+        assert call_args.kwargs['model'] == ReActDiscordBot.INTENT_DETECTION_MODEL, \
+            f"Should use fast model, got {call_args.kwargs.get('model')}"
+        
+        print(f"✓ Intent detection correctly uses {ReActDiscordBot.INTENT_DETECTION_MODEL} model")
+    
+    print("\n" + "="*60)
+    print("✓ Fast model test passed!")
+    print("="*60)
+
+
+
 if __name__ == "__main__":
     print("Discord Bot Tests")
     print("="*60)
@@ -222,6 +259,9 @@ if __name__ == "__main__":
     # Test 4: Verify TL;DR addition
     test_tldr_addition()
     
+    # Test 5: Verify fast model is used for intent detection
+    test_intent_detection_uses_fast_model()
+    
     print("\n" + "="*60)
     print("✓ ALL DISCORD BOT TESTS PASSED!")
     print("="*60)
@@ -231,8 +271,9 @@ if __name__ == "__main__":
     print("The Discord bot now:")
     print("1. Properly handles long-running agent operations in background threads")
     print("2. Detects user intent (sarcastic vs serious)")
-    print("3. Responds concisely and sarcastically to sarcastic queries")
-    print("4. Provides thorough responses to serious queries")
-    print("5. Adds TL;DR to long responses")
+    print("3. Uses nvidia/nemotron-nano-12b-v2-vl:free for faster intent detection")
+    print("4. Responds concisely and sarcastically to sarcastic queries")
+    print("5. Provides thorough responses to serious queries")
+    print("6. Adds TL;DR to long responses")
     print("="*60)
 

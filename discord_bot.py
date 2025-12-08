@@ -18,6 +18,10 @@ from react_agent import ReActAgent
 class ReActDiscordBot:
     """Discord bot that wraps the ReAct agent."""
     
+    # Model configuration
+    DEFAULT_MODEL = "tngtech/deepseek-r1t2-chimera:free"
+    INTENT_DETECTION_MODEL = "nvidia/nemotron-nano-12b-v2-vl:free"
+    
     def __init__(self, token: str, api_key: str):
         """
         Initialize the Discord bot with ReAct agent.
@@ -195,13 +199,14 @@ class ReActDiscordBot:
                     await message.channel.send(f"❌ Error: {str(e)}")
                     print(f"Error processing question: {e}")
     
-    def _call_llm(self, prompt: str, timeout: int = 10) -> str:
+    def _call_llm(self, prompt: str, timeout: int = 10, model: str = None) -> str:
         """
         Helper method to call the LLM API.
         
         Args:
             prompt: The prompt to send to the LLM
             timeout: Request timeout in seconds
+            model: Model to use. If None, uses DEFAULT_MODEL
             
         Returns:
             The LLM's response content
@@ -214,8 +219,11 @@ class ReActDiscordBot:
             "Content-Type": "application/json"
         }
         
+        # Use specified model or default to the main reasoning model
+        model_to_use = model if model is not None else self.DEFAULT_MODEL
+        
         data = {
-            "model": "tngtech/deepseek-r1t2-chimera:free",
+            "model": model_to_use,
             "messages": [
                 {"role": "user", "content": prompt}
             ]
@@ -234,6 +242,7 @@ class ReActDiscordBot:
     def _detect_intent(self, message: str) -> dict:
         """
         Detect the intent of a user message (sarcastic vs serious).
+        Uses a faster model for quick intent classification.
         
         Args:
             message: The user's message
@@ -250,7 +259,8 @@ Message: "{message}"
 JSON Response:"""
         
         try:
-            content = self._call_llm(prompt)
+            # Use faster model for intent detection
+            content = self._call_llm(prompt, model=self.INTENT_DETECTION_MODEL)
             
             # Extract JSON from response (handle cases with markdown code blocks)
             if "```json" in content:
