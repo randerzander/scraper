@@ -1039,12 +1039,17 @@ if HAS_WATCHDOG:
                 self.restart_count += 1
             
             print("🚀 Starting Discord bot...")
+            # Create environment with DISCORD_BOT_SUBPROCESS flag to prevent nested auto-restart
+            env = os.environ.copy()
+            env["DISCORD_BOT_SUBPROCESS"] = "1"
+            
             self.process = subprocess.Popen(
                 [sys.executable, __file__],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
-                bufsize=1
+                bufsize=1,
+                env=env
             )
             
             # Start output reading in a separate thread to avoid blocking
@@ -1184,8 +1189,7 @@ def main():
     # If running as a subprocess (from auto-restart wrapper), run normally
     # Otherwise check if auto-restart should be enabled
     if auto_restart and HAS_WATCHDOG and not os.environ.get("DISCORD_BOT_SUBPROCESS"):
-        # Set environment variable to indicate we're in the subprocess
-        os.environ["DISCORD_BOT_SUBPROCESS"] = "1"
+        # Run with auto-restart wrapper
         run_with_auto_restart()
     else:
         # Create and run the bot normally
