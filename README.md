@@ -109,9 +109,17 @@ print(answer)
 
 Run the agent as a Discord bot that responds to mentions:
 
+**Production Mode:**
 ```bash
 python discord_bot.py
 ```
+
+**Development Mode (with auto-restart on file changes):**
+```bash
+python run_discord_bot_dev.py
+```
+
+The development mode automatically restarts the bot when any `.py` or `.yaml` files are modified, making development and testing much easier.
 
 **Requirements:**
 1. Create a `token.txt` file in the current directory with your Discord bot token
