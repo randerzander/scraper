@@ -191,9 +191,12 @@ class TestAutoRestart(unittest.TestCase):
         runner.max_consecutive_restarts = 3  # Lower limit for testing
         runner.restart_reset_time = 100  # Long reset time so it doesn't reset during test
         
-        # Restart multiple times rapidly
+        # Initial start (should not count as restart)
+        runner.start_bot(is_restart=False)
+        
+        # Restart multiple times rapidly (should count as restarts)
         for i in range(4):
-            runner.start_bot()
+            runner.start_bot(is_restart=True)
             time.sleep(0.01)  # Small delay to simulate rapid restarts
         
         # Should have triggered the restart limit warning (30 second sleep)
