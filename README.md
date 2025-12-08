@@ -62,6 +62,10 @@ The bot uses a configurable system. Edit `config.yaml` to customize models and b
 # Set to false to disable automatic restart on code changes
 auto_restart: true
 
+# Base URL for OpenAI-compatible API (default: OpenRouter)
+# You can change this to use a local LLM or other OpenAI-compatible endpoint
+base_url: "https://openrouter.ai/api/v1/chat/completions"
+
 # Default model for main reasoning and agent operations
 default_model: "amazon/nova-2-lite-v1:free"
 
@@ -81,6 +85,11 @@ tldr_model: "amazon/nova-2-lite-v1:free"
 The default configuration uses `amazon/nova-2-lite-v1:free` for most operations, which provides a good balance of speed and quality. The vision model uses `nvidia/nemotron-nano-12b-v2-vl:free` for image captioning capabilities.
 
 The `auto_restart` setting (default: `true`) enables automatic restart of the bot when `.py` or `.yaml` files are modified during development. Set to `false` to disable this feature.
+
+The `base_url` setting allows you to use local LLMs or other OpenAI-compatible API endpoints instead of OpenRouter. This is useful for running the bot with a local LLM instance or a different API provider. Example configurations:
+- Local LM Studio: `http://localhost:1234/v1/chat/completions`
+- Local Ollama with OpenAI compatibility: `http://localhost:11434/v1/chat/completions`
+- Local vLLM server: `http://localhost:8000/v1/chat/completions`
 
 ## Usage
 
@@ -176,6 +185,7 @@ python tests/test_react_agent.py       # Test the ReAct agent
 python tests/test_discord_bot.py       # Test Discord bot functionality
 python tests/test_logging.py           # Test logging infrastructure
 python tests/test_colored_logging.py   # Test colored logging and reactions
+python tests/test_read_file.py         # Test file reading tool and configurable base URL
 ```
 
 These tests verify:
@@ -183,6 +193,8 @@ These tests verify:
 - Discord bot async behavior and intent detection
 - Logging functionality for user queries, tool calls, and LLM interactions
 - Colored logging output and reaction-based evaluation logging
+- File reading tool security and functionality
+- Configurable base URL for OpenAI-compatible endpoints
 
 ### Testing uv Virtual Environment Setup
 
@@ -217,6 +229,11 @@ The ReAct agent follows a thought-action-observation loop:
 - `scrape_url`: Scrape and parse HTML content from a URL
   - Input: A URL to scrape
   - Output: Markdown-formatted content extracted from the page
+
+- `read_file`: Read a file from the current working directory
+  - Input: A file path relative to the current working directory (e.g., 'README.md', 'src/main.py')
+  - Output: Content of the file
+  - Security: Prevents directory traversal attacks and enforces a 1 MB file size limit
 
 ## Example
 
