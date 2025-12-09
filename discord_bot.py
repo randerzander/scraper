@@ -325,8 +325,13 @@ class ReActDiscordBot:
                     total_input_tokens = sum(stats["total_input_tokens"] for stats in merged_token_stats.values())
                     total_output_tokens = sum(stats["total_output_tokens"] for stats in merged_token_stats.values())
                     
-                    # Format metadata in small font
-                    models_used = ", ".join(merged_token_stats.keys())
+                    # Format metadata in small font with call counts per model
+                    models_info = []
+                    for model, stats in merged_token_stats.items():
+                        model_name = model.split('/')[-1] if '/' in model else model  # Use short name
+                        calls = stats["total_calls"]
+                        models_info.append(f"{model_name} ({calls}x)")
+                    models_used = " • ".join(models_info)
                     metadata = f"\n\n-# *Models: {models_used} • Tokens: {total_input_tokens} in / {total_output_tokens} out • Time: {round(total_response_time)}s*"
                     
                     # Append metadata to answer
@@ -750,6 +755,12 @@ TL;DR:"""
             
             try:
                 tldr = self._call_llm(prompt, model=MODEL_CONFIG.get("tldr_model", "amazon/nova-2-lite-v1:free"))
+                # Strip any leading "TL;DR:" from the response to avoid duplication
+                # Use lowercase constant for case-insensitive comparison via .lower().startswith()
+                tldr = tldr.strip()
+                tldr_prefix = "tl;dr:"
+                if tldr.lower().startswith(tldr_prefix):
+                    tldr = tldr[len(tldr_prefix):].strip()  # Remove prefix after case-insensitive match
                 # Format the response with TL;DR at the end
                 return f"{response}\n\n---\n\n**TL;DR:** {tldr}"
             except Exception as e:
