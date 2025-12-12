@@ -696,9 +696,6 @@ Question: {question}
                 return output
             elif action == "scrape_url":
                 result = tool_function(action_input)
-                # Limit result length to avoid overwhelming the context
-                if len(result) > self.MAX_CONTENT_LENGTH:
-                    result = result[:self.MAX_CONTENT_LENGTH] + "\n\n[Content truncated...]"
                 logger.info(f"Tool {action} completed successfully, scraped {len(result)} characters")
                 
                 # Track successful tool call
@@ -746,7 +743,7 @@ Question: {question}
             
             return error_msg
     
-    def run(self, question: str, max_iterations: int = 5, verbose: bool = True) -> str:
+    def run(self, question: str, max_iterations: int = 5, verbose: bool = True, iteration_callback=None) -> str:
         """
         Run the ReAct agent to answer a question.
         
@@ -754,6 +751,7 @@ Question: {question}
             question: The question to answer
             max_iterations: Maximum number of reasoning iterations
             verbose: Whether to print intermediate steps
+            iteration_callback: Optional callback function called after each iteration with iteration number
             
         Returns:
             The final answer
@@ -761,6 +759,9 @@ Question: {question}
         history = []
         
         for iteration in range(max_iterations):
+            # Call the iteration callback if provided
+            if iteration_callback:
+                iteration_callback(iteration)
             if verbose:
                 print(f"\n{'='*60}")
                 print(f"Iteration {iteration + 1}/{max_iterations}")

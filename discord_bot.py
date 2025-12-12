@@ -3,7 +3,7 @@
 Discord bot wrapper for the ReAct agent.
 This bot reads questions from Discord messages and uses the ReAct agent to answer them.
 
-The bot's token should be in a file named 'token.txt' in the current working directory.
+The bot's token should be in a file named '.bot_token' in the current working directory.
 """
 
 import os
@@ -210,6 +210,14 @@ class ReActDiscordBot:
                 if not question and image_urls:
                     question = "What do you see in this image?"
                 
+                # Add a thinking emoji reaction to the original message (do this early)
+                try:
+                    await message.add_reaction("⏳")
+                except (discord.Forbidden, discord.NotFound, discord.HTTPException) as e:
+                    # If we can't add a reaction, log it and continue anyway
+                    logger.warning(f"Could not add hourglass reaction: {e}")
+                    pass
+                
                 # Log the user query in green
                 print(f"{Fore.GREEN}[USER QUERY] {message.author.display_name}: {question}{Style.RESET_ALL}")
                 logger.info(f"User query received from {message.author.display_name}: {question}")
@@ -227,13 +235,6 @@ class ReActDiscordBot:
                 if reply_image_urls:
                     image_urls.extend(reply_image_urls)
                     logger.info(f"Added {len(reply_image_urls)} image(s) from reply chain")
-                
-                # Add a thinking emoji reaction to the original message
-                try:
-                    await message.add_reaction("⏳")
-                except (discord.Forbidden, discord.NotFound, discord.HTTPException):
-                    # If we can't add a reaction, continue anyway
-                    pass
                 
                 try:
                     # Detect user intent (sarcastic vs serious)
@@ -254,13 +255,15 @@ class ReActDiscordBot:
                     # Modify the question based on intent
                     if is_sarcastic:
                         # For sarcastic queries, instruct agent to be concise and sarcastic
-                        question_with_context = f"""[Current date and time: {current_time}]
+                        question_with_context = f"""[You are a Discord bot named Usefool]
+[Current date and time: {current_time}]
 [User Intent: Sarcastic/Humorous - Respond with wit, sarcasm, and keep it VERY concise (2-3 sentences max)]
 {image_context}
 {reply_context}User question: {question}"""
                     else:
                         # For serious queries, instruct agent to be thorough
-                        question_with_context = f"""[Current date and time: {current_time}]
+                        question_with_context = f"""[You are a Discord bot named Usefool]
+[Current date and time: {current_time}]
 [User Intent: Serious - Provide a thorough, informative response]
 {image_context}
 {reply_context}User question: {question}"""
@@ -272,10 +275,28 @@ class ReActDiscordBot:
                     if image_urls:
                         self._register_image_caption_tool(question)
                     
+                    # Create iteration callback to alternate hourglass reactions
+                    async def update_hourglass(iteration_num):
+                        try:
+                            # Remove previous reaction
+                            if iteration_num > 0:
+                                prev_emoji = "⏳" if iteration_num % 2 == 1 else "⌛"
+                                await message.remove_reaction(prev_emoji, self.client.user)
+                            # Add new reaction
+                            new_emoji = "⌛" if iteration_num % 2 == 1 else "⏳"
+                            await message.add_reaction(new_emoji)
+                        except (discord.Forbidden, discord.NotFound, discord.HTTPException) as e:
+                            logger.warning(f"Could not update hourglass reaction: {e}")
+                    
+                    # Wrapper to make callback thread-safe for asyncio.to_thread
+                    def iteration_callback(iteration_num):
+                        # Schedule the coroutine in the event loop
+                        asyncio.run_coroutine_threadsafe(update_hourglass(iteration_num), self.client.loop)
+                    
                     # Use the ReAct agent to answer the question (verbose=False to reduce log noise)
                     # Run in a thread pool to avoid blocking the Discord event loop and heartbeat
                     answer = await asyncio.to_thread(
-                        self.agent.run, question_with_context, max_iterations=5, verbose=False
+                        self.agent.run, question_with_context, max_iterations=10, verbose=False, iteration_callback=iteration_callback
                     )
                     
                     # Unregister channel history tool to avoid memory leaks
@@ -288,21 +309,18 @@ class ReActDiscordBot:
                     # Log the final response in red
                     print(f"{Fore.RED}[FINAL RESPONSE] {answer[:100]}...{Style.RESET_ALL}" if len(answer) > 100 else f"{Fore.RED}[FINAL RESPONSE] {answer}{Style.RESET_ALL}")
                     
-                    # If response is longer than 1000 characters, make it more concise
-                    if len(answer) > 1000:
-                        logger.info(f"Response length {len(answer)} exceeds 1000 characters, making it more concise...")
-                        answer = await asyncio.to_thread(self._make_response_concise, answer)
-                        logger.info(f"Concise response length: {len(answer)}")
-                    
                     # For serious queries with long responses, add TL;DR
-                    if not is_sarcastic:
+                    if not is_sarcastic and len(answer) > 300:
                         answer = await asyncio.to_thread(self._add_tldr_to_response, answer)
                     
-                    # Remove the thinking emoji reaction
+                    # Remove both hourglass emoji reactions
                     try:
                         await message.remove_reaction("⏳", self.client.user)
                     except (discord.Forbidden, discord.NotFound, discord.HTTPException):
-                        # If we can't remove the reaction, continue anyway
+                        pass
+                    try:
+                        await message.remove_reaction("⌛", self.client.user)
+                    except (discord.Forbidden, discord.NotFound, discord.HTTPException):
                         pass
                     
                     # Calculate total response time
@@ -322,6 +340,13 @@ class ReActDiscordBot:
                         merged_token_stats[model]["total_output_tokens"] += stats["total_output_tokens"]
                         merged_token_stats[model]["total_calls"] += stats["total_calls"]
                     
+                    # Count tool calls by type from agent tracking
+                    tool_call_counts = {}
+                    for entry in agent_tracking["call_sequence"]:
+                        if entry["type"] == "tool_call":
+                            tool_name = entry["tool_name"]
+                            tool_call_counts[tool_name] = tool_call_counts.get(tool_name, 0) + 1
+                    
                     # Calculate totals across all models
                     total_input_tokens = sum(stats["total_input_tokens"] for stats in merged_token_stats.values())
                     total_output_tokens = sum(stats["total_output_tokens"] for stats in merged_token_stats.values())
@@ -333,7 +358,14 @@ class ReActDiscordBot:
                         calls = stats["total_calls"]
                         models_info.append(f"{model_name} ({calls}x)")
                     models_used = " • ".join(models_info)
-                    metadata = f"\n\n-# *Models: {models_used} • Tokens: {total_input_tokens} in / {total_output_tokens} out • Time: {round(total_response_time)}s*"
+                    
+                    # Format tool calls breakdown
+                    tool_calls_info = ""
+                    if tool_call_counts:
+                        tool_calls_list = [f"{tool}: {count}" for tool, count in tool_call_counts.items()]
+                        tool_calls_info = f" • Tools: {', '.join(tool_calls_list)}"
+                    
+                    metadata = f"\n\n-# *Models: {models_used} • Tokens: {total_input_tokens} in / {total_output_tokens} out{tool_calls_info} • Time: {round(total_response_time)}s*"
                     
                     # Append metadata to answer
                     answer = answer + metadata
@@ -757,12 +789,13 @@ TL;DR:"""
             try:
                 tldr = self._call_llm(prompt, model=MODEL_CONFIG.get("tldr_model", "amazon/nova-2-lite-v1:free"))
                 # Strip any leading "TL;DR:" or "TLDR:" from the response to avoid duplication
-                # Handle multiple occurrences (e.g., "TL;DR: TL;DR: text")
+                # Handle multiple occurrences and various formats
                 tldr = tldr.strip()
                 while True:
                     stripped = False
-                    for prefix in ["tl;dr:", "tldr:"]:
-                        if tldr.lower().startswith(prefix):
+                    # Check for various TL;DR prefixes (case-insensitive)
+                    for prefix in ["tl;dr:", "tldr:", "**tl;dr:**", "**tldr:**", "tl;dr", "tldr"]:
+                        if tldr.lower().startswith(prefix.lower()):
                             tldr = tldr[len(prefix):].strip()
                             stripped = True
                             break
@@ -974,13 +1007,8 @@ TL;DR:"""
             print(f"{Fore.CYAN}[QUERY LOG] Saved to {filename}{Style.RESET_ALL}")
             
             # Print token statistics summary
-            print(f"{Fore.CYAN}[TOKEN STATS]{Style.RESET_ALL}")
             for model, stats in merged_token_stats.items():
-                print(f"  Model: {model}")
-                print(f"    Calls: {stats['total_calls']}")
-                print(f"    Input tokens: {stats['total_input_tokens']}")
-                print(f"    Output tokens: {stats['total_output_tokens']}")
-                print(f"    Total tokens: {stats['total_input_tokens'] + stats['total_output_tokens']}")
+                print(f"{Fore.CYAN}[TOKEN STATS] Model: {model} | Calls: {stats['total_calls']} | Input: {stats['total_input_tokens']} | Output: {stats['total_output_tokens']} | Total: {stats['total_input_tokens'] + stats['total_output_tokens']}{Style.RESET_ALL}")
         
         except Exception as e:
             logger.error(f"Failed to save query log: {str(e)}")
@@ -1185,24 +1213,24 @@ def run_with_auto_restart():
 def main():
     """
     Main function to run the Discord bot.
-    Reads the token from token.txt in the current working directory.
+    Reads the token from .bot_token in the current working directory.
     """
-    # Read Discord token from token.txt
-    token_file = "token.txt"
+    # Read Discord token from .bot_token
+    token_file = ".bot_token"
     if not os.path.exists(token_file):
         print("="*80)
-        print("ERROR: token.txt file not found in the current directory")
+        print("ERROR: .bot_token file not found in the current directory")
         print("="*80)
         print("\nTo use this Discord bot, you need:")
         print("1. A Discord bot token")
-        print("2. Create a file named 'token.txt' in the current directory")
+        print("2. Create a file named '.bot_token' in the current directory")
         print("3. Put your Discord bot token in that file")
         print("\nHow to get a Discord bot token:")
         print("1. Go to https://discord.com/developers/applications")
         print("2. Create a new application (or select an existing one)")
         print("3. Go to the 'Bot' section")
         print("4. Click 'Reset Token' to get your token")
-        print("5. Save the token to token.txt")
+        print("5. Save the token to .bot_token")
         print("\nBot Permissions Required:")
         print("- Read Messages/View Channels")
         print("- Send Messages")
@@ -1214,7 +1242,7 @@ def main():
         token = f.read().strip()
     
     if not token:
-        print("ERROR: token.txt is empty")
+        print("ERROR: .bot_token is empty")
         return
     
     # Get OpenRouter API key from environment
