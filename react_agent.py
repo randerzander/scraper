@@ -11,6 +11,7 @@ import logging
 import time
 import base64
 import yaml
+from datetime import datetime
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 from duckduckgo_search import DDGS
@@ -25,27 +26,21 @@ setup_logging()
 logger = logging.getLogger(__name__)
 
 
-# Load model configuration
+DEFAULT_MODEL_CONFIG = {
+    "base_url": "https://openrouter.ai/api/v1/chat/completions",
+    "default_model": "amazon/nova-2-lite-v1:free",
+    "image_caption_model": "nvidia/nemotron-nano-12b-v2-vl:free"
+}
+
 def load_model_config():
     """Load model configuration from config.yaml."""
     config_path = Path(__file__).parent / "config.yaml"
     try:
         with open(config_path, 'r') as f:
             return yaml.safe_load(f)
-    except FileNotFoundError:
-        logger.warning(f"Config file not found at {config_path}, using defaults")
-        return {
-            "base_url": "https://openrouter.ai/api/v1/chat/completions",
-            "default_model": "amazon/nova-2-lite-v1:free",
-            "image_caption_model": "nvidia/nemotron-nano-12b-v2-vl:free"
-        }
-    except Exception as e:
-        logger.error(f"Error loading config: {e}, using defaults")
-        return {
-            "base_url": "https://openrouter.ai/api/v1/chat/completions",
-            "default_model": "amazon/nova-2-lite-v1:free",
-            "image_caption_model": "nvidia/nemotron-nano-12b-v2-vl:free"
-        }
+    except (FileNotFoundError, Exception) as e:
+        logger.warning(f"Config loading failed: {e}, using defaults")
+        return DEFAULT_MODEL_CONFIG.copy()
 
 MODEL_CONFIG = load_model_config()
 
@@ -457,7 +452,11 @@ class ReActAgent:
             for name, info in self.tools.items()
         ])
         
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
         prompt = f"""You are a helpful assistant that can use tools to answer questions. You follow the ReAct (Reasoning + Acting) pattern.
+
+Current date and time: {current_time}
 
 Available tools:
 {tools_desc}

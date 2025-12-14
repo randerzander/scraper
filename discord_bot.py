@@ -17,12 +17,7 @@ import time
 import yaml
 import subprocess
 import threading
-try:
-    import fcntl
-    HAS_FCNTL = True
-except ImportError:
-    # fcntl is not available on Windows
-    HAS_FCNTL = False
+import fcntl
 from datetime import datetime
 from pathlib import Path
 from react_agent import ReActAgent, two_round_image_caption
@@ -34,38 +29,28 @@ setup_logging()
 logger = logging.getLogger(__name__)
 
 
-# Load bot configuration
+DEFAULT_CONFIG = {
+    "auto_restart": True,
+    "base_url": "https://openrouter.ai/api/v1/chat/completions",
+    "default_model": "amazon/nova-2-lite-v1:free",
+    "intent_detection_model": "amazon/nova-2-lite-v1:free",
+    "image_caption_model": "nvidia/nemotron-nano-12b-v2-vl:free",
+    "conciseness_model": "amazon/nova-2-lite-v1:free",
+    "tldr_model": "amazon/nova-2-lite-v1:free"
+}
+
 def load_config():
     """Load bot configuration from config.yaml."""
     config_path = Path(__file__).parent / "config.yaml"
     try:
         with open(config_path, 'r') as f:
             return yaml.safe_load(f)
-    except FileNotFoundError:
-        logger.warning(f"Config file not found at {config_path}, using defaults")
-        return {
-            "auto_restart": True,
-            "base_url": "https://openrouter.ai/api/v1/chat/completions",
-            "default_model": "amazon/nova-2-lite-v1:free",
-            "intent_detection_model": "amazon/nova-2-lite-v1:free",
-            "image_caption_model": "nvidia/nemotron-nano-12b-v2-vl:free",
-            "conciseness_model": "amazon/nova-2-lite-v1:free",
-            "tldr_model": "amazon/nova-2-lite-v1:free"
-        }
-    except Exception as e:
-        logger.error(f"Error loading config: {e}, using defaults")
-        return {
-            "auto_restart": True,
-            "base_url": "https://openrouter.ai/api/v1/chat/completions",
-            "default_model": "amazon/nova-2-lite-v1:free",
-            "intent_detection_model": "amazon/nova-2-lite-v1:free",
-            "image_caption_model": "nvidia/nemotron-nano-12b-v2-vl:free",
-            "conciseness_model": "amazon/nova-2-lite-v1:free",
-            "tldr_model": "amazon/nova-2-lite-v1:free"
-        }
+    except (FileNotFoundError, Exception) as e:
+        logger.warning(f"Config loading failed: {e}, using defaults")
+        return DEFAULT_CONFIG.copy()
 
 CONFIG = load_config()
-MODEL_CONFIG = CONFIG  # Alias for backward compatibility
+MODEL_CONFIG = CONFIG
 
 
 class ReActDiscordBot:
@@ -75,6 +60,24 @@ class ReActDiscordBot:
     DATA_DIR = Path("data")
     EVAL_FILE = DATA_DIR / "eval_qs.jsonl"
     QUERY_LOGS_DIR = DATA_DIR / "query_logs"
+    
+    async def _add_reaction(self, message, emoji: str):
+        """Add a reaction to a message."""
+        await message.add_reaction(emoji)
+    
+    async def _remove_reaction(self, message, emoji: str):
+        """Remove a reaction from a message."""
+        await message.remove_reaction(emoji, self.client.user)
+    
+    def _extract_image_urls(self, message) -> list[str]:
+        """Extract image URLs from message attachments."""
+        return [att.url for att in message.attachments 
+                if att.content_type and att.content_type.startswith('image/')]
+    
+    def _remove_bot_mention(self, text: str) -> str:
+        """Remove bot mentions from text."""
+        text = text.replace(f"<@{self.client.user.id}>", "").strip()
+        return text.replace(f"<@!{self.client.user.id}>", "").strip()
     
     def __init__(self, token: str, api_key: str):
         """
@@ -132,42 +135,32 @@ class ReActDiscordBot:
             
             # Follow the reply chain backwards
             while current_msg.reference and depth < max_chain_depth:
-                try:
-                    # Get the referenced message (may need to fetch if not cached)
-                    ref_msg = getattr(current_msg, 'referenced_message', None)
-                    if not ref_msg and current_msg.reference.message_id:
-                        # Fetch the message if it's not in cache
-                        ref_msg = await current_msg.channel.fetch_message(current_msg.reference.message_id)
-                    
-                    if not ref_msg:
-                        break
-                    
-                    # Check for image attachments in the replied message
-                    if ref_msg.attachments:
-                        for attachment in ref_msg.attachments:
-                            # Check if attachment is an image
-                            if attachment.content_type and attachment.content_type.startswith('image/'):
-                                reply_image_urls.append(attachment.url)
-                                logger.info(f"Found image attachment in reply chain: {attachment.url}")
-                    
-                    # Format the message content
-                    author_name = ref_msg.author.display_name
-                    content = ref_msg.content
-                    
-                    # Remove bot mentions from content for clarity
-                    content = content.replace(f"<@{self.client.user.id}>", "").strip()
-                    content = content.replace(f"<@!{self.client.user.id}>", "").strip()
-                    
-                    # Add to chain (we're building it backwards, will reverse later)
-                    if content:
-                        chain.append(f"{author_name}: {content}")
-                    
-                    # Move to the next message in the chain
-                    current_msg = ref_msg
-                    depth += 1
-                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                    # If we can't fetch the message, stop here
+                # Get the referenced message (may need to fetch if not cached)
+                ref_msg = getattr(current_msg, 'referenced_message', None)
+                if not ref_msg and current_msg.reference.message_id:
+                    # Fetch the message if it's not in cache
+                    ref_msg = await current_msg.channel.fetch_message(current_msg.reference.message_id)
+                
+                if not ref_msg:
                     break
+                
+                # Check for image attachments in the replied message
+                img_urls = self._extract_image_urls(ref_msg)
+                reply_image_urls.extend(img_urls)
+                for url in img_urls:
+                    logger.info(f"Found image attachment in reply chain: {url}")
+                
+                # Format the message content
+                author_name = ref_msg.author.display_name
+                content = self._remove_bot_mention(ref_msg.content)
+                
+                # Add to chain (we're building it backwards, will reverse later)
+                if content:
+                    chain.append(f"{author_name}: {content}")
+                
+                # Move to the next message in the chain
+                current_msg = ref_msg
+                depth += 1
             
             # Reverse to get chronological order (oldest first)
             chain.reverse()
@@ -188,35 +181,18 @@ class ReActDiscordBot:
             
             # Only respond to messages that mention the bot
             if self.client.user.mentioned_in(message):
-                # Extract the question by removing only the bot's mention
-                question = message.content
-                question = question.replace(f"<@{self.client.user.id}>", "").strip()
-                question = question.replace(f"<@!{self.client.user.id}>", "").strip()
+                question = self._remove_bot_mention(message.content)
                 
                 # Check for image attachments
-                image_urls = []
-                if message.attachments:
-                    for attachment in message.attachments:
-                        # Check if attachment is an image
-                        if attachment.content_type and attachment.content_type.startswith('image/'):
-                            image_urls.append(attachment.url)
-                            logger.info(f"Found image attachment: {attachment.url}")
-                
-                if not question and not image_urls:
-                    await message.channel.send("Please ask me a question after mentioning me!")
-                    return
+                image_urls = self._extract_image_urls(message)
+                for url in image_urls:
+                    logger.info(f"Found image attachment: {url}")
                 
                 # If there are images but no question, provide a default question
                 if not question and image_urls:
                     question = "What do you see in this image?"
                 
-                # Add a thinking emoji reaction to the original message (do this early)
-                try:
-                    await message.add_reaction("⏳")
-                except (discord.Forbidden, discord.NotFound, discord.HTTPException) as e:
-                    # If we can't add a reaction, log it and continue anyway
-                    logger.warning(f"Could not add hourglass reaction: {e}")
-                    pass
+                await self._add_reaction(message, "⏳")
                 
                 # Log the user query in green
                 print(f"{Fore.GREEN}[USER QUERY] {message.author.display_name}: {question}{Style.RESET_ALL}")
@@ -237,13 +213,6 @@ class ReActDiscordBot:
                     logger.info(f"Added {len(reply_image_urls)} image(s) from reply chain")
                 
                 try:
-                    # Detect user intent (sarcastic vs serious)
-                    intent = await asyncio.to_thread(self._detect_intent, question)
-                    is_sarcastic = intent.get("is_sarcastic", False)
-                    
-                    # Add current datetime to the query so the bot can consider current time
-                    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    
                     # Build image context if images are present
                     image_context = ""
                     if image_urls:
@@ -252,19 +221,8 @@ class ReActDiscordBot:
                             image_context += f"Image {i} URL: {img_url}\n"
                         image_context += "\nYou can use the 'caption_image' tool to analyze these images.\n"
                     
-                    # Modify the question based on intent
-                    if is_sarcastic:
-                        # For sarcastic queries, instruct agent to be concise and sarcastic
-                        question_with_context = f"""[You are a Discord bot named Usefool]
-[Current date and time: {current_time}]
-[User Intent: Sarcastic/Humorous - Respond with wit, sarcasm, and keep it VERY concise (2-3 sentences max)]
-{image_context}
-{reply_context}User question: {question}"""
-                    else:
-                        # For serious queries, instruct agent to be thorough
-                        question_with_context = f"""[You are a Discord bot named Usefool]
-[Current date and time: {current_time}]
-[User Intent: Serious - Provide a thorough, informative response]
+                    # Build question with context
+                    question_with_context = f"""[You are a Discord bot named Usefool]
 {image_context}
 {reply_context}User question: {question}"""
                     
@@ -277,16 +235,11 @@ class ReActDiscordBot:
                     
                     # Create iteration callback to alternate hourglass reactions
                     async def update_hourglass(iteration_num):
-                        try:
-                            # Remove previous reaction
-                            if iteration_num > 0:
-                                prev_emoji = "⏳" if iteration_num % 2 == 1 else "⌛"
-                                await message.remove_reaction(prev_emoji, self.client.user)
-                            # Add new reaction
-                            new_emoji = "⌛" if iteration_num % 2 == 1 else "⏳"
-                            await message.add_reaction(new_emoji)
-                        except (discord.Forbidden, discord.NotFound, discord.HTTPException) as e:
-                            logger.warning(f"Could not update hourglass reaction: {e}")
+                        if iteration_num > 0:
+                            prev_emoji = "⏳" if iteration_num % 2 == 1 else "⌛"
+                            await self._remove_reaction(message, prev_emoji)
+                        new_emoji = "⌛" if iteration_num % 2 == 1 else "⏳"
+                        await self._add_reaction(message, new_emoji)
                     
                     # Wrapper to make callback thread-safe for asyncio.to_thread
                     def iteration_callback(iteration_num):
@@ -309,19 +262,9 @@ class ReActDiscordBot:
                     # Log the final response in red
                     print(f"{Fore.RED}[FINAL RESPONSE] {answer[:100]}...{Style.RESET_ALL}" if len(answer) > 100 else f"{Fore.RED}[FINAL RESPONSE] {answer}{Style.RESET_ALL}")
                     
-                    # For serious queries with long responses, add TL;DR
-                    if not is_sarcastic and len(answer) > 300:
-                        answer = await asyncio.to_thread(self._add_tldr_to_response, answer)
-                    
                     # Remove both hourglass emoji reactions
-                    try:
-                        await message.remove_reaction("⏳", self.client.user)
-                    except (discord.Forbidden, discord.NotFound, discord.HTTPException):
-                        pass
-                    try:
-                        await message.remove_reaction("⌛", self.client.user)
-                    except (discord.Forbidden, discord.NotFound, discord.HTTPException):
-                        pass
+                    await self._remove_reaction(message, "⏳")
+                    await self._remove_reaction(message, "⌛")
                     
                     # Calculate total response time
                     total_response_time = time.time() - query_start_time
@@ -352,45 +295,33 @@ class ReActDiscordBot:
                     total_output_tokens = sum(stats["total_output_tokens"] for stats in merged_token_stats.values())
                     
                     # Format metadata in small font with call counts per model
-                    models_info = []
-                    for model, stats in merged_token_stats.items():
-                        model_name = model.split('/')[-1] if '/' in model else model  # Use short name
-                        calls = stats["total_calls"]
-                        models_info.append(f"{model_name} ({calls}x)")
+                    models_info = [f"{m.split('/')[-1]} ({s['total_calls']}x)" 
+                                   for m, s in merged_token_stats.items()]
                     models_used = " • ".join(models_info)
                     
                     # Format tool calls breakdown
                     tool_calls_info = ""
                     if tool_call_counts:
-                        tool_calls_list = [f"{tool}: {count}" for tool, count in tool_call_counts.items()]
-                        tool_calls_info = f" • Tools: {', '.join(tool_calls_list)}"
+                        tool_calls_info = f" • Tools: {', '.join(f'{t}: {c}' for t, c in tool_call_counts.items())}"
                     
                     metadata = f"\n\n-# *Models: {models_used} • Tokens: {total_input_tokens} in / {total_output_tokens} out{tool_calls_info} • Time: {round(total_response_time)}s*"
+                    complete_answer = answer + metadata
                     
-                    # Append metadata to answer
-                    answer = answer + metadata
-                    
-                    # Save the complete answer before sending it
-                    complete_answer = answer
-                    
-                    # Discord has a 2000 character limit for messages
-                    if len(answer) > 1900:
-                        # Split the answer into multiple messages at word boundaries
+                    # Discord has a 2000 character limit for messages - split if needed
+                    if len(complete_answer) > 1900:
                         chunks = []
-                        while len(answer) > 1900:
-                            # Find the last space before the 1900 character limit
-                            split_pos = answer.rfind(' ', 0, 1900)
-                            if split_pos == -1:  # No space found, split at limit
-                                split_pos = 1900
-                            chunks.append(answer[:split_pos])
-                            answer = answer[split_pos:].strip()
-                        if answer:  # Add remaining text
-                            chunks.append(answer)
-                        
-                        for i, chunk in enumerate(chunks):
+                        remaining = complete_answer
+                        while len(remaining) > 1900:
+                            split_pos = remaining.rfind(' ', 0, 1900)
+                            split_pos = 1900 if split_pos == -1 else split_pos
+                            chunks.append(remaining[:split_pos])
+                            remaining = remaining[split_pos:].strip()
+                        if remaining:
+                            chunks.append(remaining)
+                        for chunk in chunks:
                             await message.channel.send(chunk)
                     else:
-                        await message.channel.send(answer)
+                        await message.channel.send(complete_answer)
                     
                     # Save query log after successful response
                     self._save_query_log(str(message.id), question, complete_answer, message.author.display_name)
@@ -402,12 +333,7 @@ class ReActDiscordBot:
                     # Unregister image caption tool in case of error
                     self._unregister_image_caption_tool()
                     
-                    # Remove the thinking emoji reaction if there was an error
-                    try:
-                        await message.remove_reaction("⏳", self.client.user)
-                    except (discord.Forbidden, discord.NotFound, discord.HTTPException):
-                        # If we can't remove the reaction, continue anyway
-                        pass
+                    await self._remove_reaction(message, "⏳")
                     await message.channel.send(f"❌ Error: {str(e)}")
                     print(f"Error processing question: {e}")
         
@@ -460,18 +386,10 @@ class ReActDiscordBot:
         messages.reverse()
         formatted_messages = []
         for msg in messages:
-            author_name = msg.author.display_name
-            content = msg.content
-            
-            # Remove bot mentions from content for clarity
-            content = content.replace(f"<@{self.client.user.id}>", "").strip()
-            content = content.replace(f"<@!{self.client.user.id}>", "").strip()
-            
-            # Format timestamp
-            timestamp = msg.created_at.strftime("%Y-%m-%d %H:%M:%S")
-            
+            content = self._remove_bot_mention(msg.content)
             if content:
-                formatted_messages.append(f"[{timestamp}] {author_name}: {content}")
+                timestamp = msg.created_at.strftime("%Y-%m-%d %H:%M:%S")
+                formatted_messages.append(f"[{timestamp}] {msg.author.display_name}: {content}")
         
         if formatted_messages:
             return f"Recent channel history ({len(formatted_messages)} messages):\n" + "\n".join(formatted_messages)
@@ -701,123 +619,13 @@ class ReActDiscordBot:
         
         return content
     
-    def _detect_intent(self, message: str) -> dict:
-        """
-        Detect the intent of a user message (sarcastic vs serious).
-        Uses a faster model for quick intent classification.
-        
-        Args:
-            message: The user's message
-            
-        Returns:
-            Dictionary with 'is_sarcastic' (bool) and 'confidence' (str)
-        """
-        prompt = f"""Analyze the following message and determine if the user is being sarcastic or serious.
-Respond with ONLY a JSON object in this exact format:
-{{"is_sarcastic": true/false, "confidence": "high/medium/low"}}
-
-Message: "{message}"
-
-JSON Response:"""
-        
-        try:
-            # Use intent detection model from config
-            content = self._call_llm(prompt, model=MODEL_CONFIG.get("intent_detection_model", "amazon/nova-2-lite-v1:free"))
-            
-            # Extract JSON from response (handle cases with markdown code blocks)
-            if "```json" in content:
-                parts = content.split("```json")
-                if len(parts) > 1 and "```" in parts[1]:
-                    content = parts[1].split("```")[0].strip()
-            elif "```" in content:
-                parts = content.split("```")
-                if len(parts) > 1:
-                    content = parts[1].strip()
-            
-            # Try to parse JSON
-            intent_data = json.loads(content)
-            return intent_data
-        except Exception as e:
-            # Default to serious if detection fails
-            print(f"Intent detection failed: {e}")
-            return {"is_sarcastic": False, "confidence": "low"}
-    
-    def _make_response_concise(self, response: str) -> str:
-        """
-        Make a response more concise if it's too long.
-        
-        Args:
-            response: The full response text
-            
-        Returns:
-            A more concise version of the response
-        """
-        prompt = f"""Make the following response MUCH more concise while preserving the key information and main points. 
-Aim to reduce it significantly in length while keeping it informative and coherent.
-
-Original response:
-{response}
-
-Concise version:"""
-        
-        try:
-            concise_response = self._call_llm(prompt, model=MODEL_CONFIG.get("conciseness_model", "amazon/nova-2-lite-v1:free"))
-            return concise_response
-        except Exception as e:
-            print(f"Failed to make response concise: {e}")
-            # Return original response if conciseness reduction fails
-            return response
-    
-    def _add_tldr_to_response(self, response: str) -> str:
-        """
-        Add a TL;DR to long responses.
-        
-        Args:
-            response: The full response text
-            
-        Returns:
-            Response with TL;DR appended at the end if applicable
-        """
-        # Add TL;DR for responses longer than 300 characters
-        if len(response) > 300:
-            prompt = f"""Provide a concise TL;DR (1-2 sentences max) for this response:
-
-{response}
-
-TL;DR:"""
-            
-            try:
-                tldr = self._call_llm(prompt, model=MODEL_CONFIG.get("tldr_model", "amazon/nova-2-lite-v1:free"))
-                # Strip any leading "TL;DR:" or "TLDR:" from the response to avoid duplication
-                # Handle multiple occurrences and various formats
-                tldr = tldr.strip()
-                while True:
-                    stripped = False
-                    # Check for various TL;DR prefixes (case-insensitive)
-                    for prefix in ["tl;dr:", "tldr:", "**tl;dr:**", "**tldr:**", "tl;dr", "tldr"]:
-                        if tldr.lower().startswith(prefix.lower()):
-                            tldr = tldr[len(prefix):].strip()
-                            stripped = True
-                            break
-                    if not stripped:
-                        break
-                # Format the response with TL;DR at the end
-                return f"{response}\n\n---\n\n**TL;DR:** {tldr}"
-            except Exception as e:
-                print(f"TL;DR generation failed: {e}")
-                return response
-        
-        return response
-    
     def _lock_file(self, f):
-        """Lock a file for exclusive access (cross-platform)."""
-        if HAS_FCNTL:
-            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+        """Lock a file for exclusive access."""
+        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
     
     def _unlock_file(self, f):
-        """Unlock a file (cross-platform)."""
-        if HAS_FCNTL:
-            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+        """Unlock a file."""
+        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
     
     async def _log_eval_question(self, message: discord.Message, user: discord.User):
         """
@@ -863,11 +671,7 @@ TL;DR:"""
             print(f"{Fore.CYAN}[EVAL] Question logged: {question[:50]}...{Style.RESET_ALL}")
             logger.info(f"Eval question logged from {message.author.display_name}: {question}")
             
-            # Add confirmation reaction
-            try:
-                await message.add_reaction("📝")
-            except (discord.Forbidden, discord.NotFound, discord.HTTPException):
-                pass
+            await self._add_reaction(message, "📝")
         
         except Exception as e:
             logger.error(f"Failed to log eval question: {str(e)}")
@@ -937,10 +741,7 @@ TL;DR:"""
             
             # Add confirmation reaction if update was successful
             if updated:
-                try:
-                    await message.add_reaction("💚")
-                except (discord.Forbidden, discord.NotFound, discord.HTTPException):
-                    pass
+                await self._add_reaction(message, "💚")
         
         except Exception as e:
             logger.error(f"Failed to log accepted answer: {str(e)}")
@@ -1029,131 +830,125 @@ TL;DR:"""
 
 
 # Auto-restart functionality classes
-try:
-    from watchdog.observers import Observer
-    from watchdog.events import FileSystemEventHandler
-    HAS_WATCHDOG = True
-except ImportError:
-    HAS_WATCHDOG = False
-    logger.warning("watchdog not installed, auto-restart functionality disabled")
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler
 
 
-if HAS_WATCHDOG:
-    class BotRestartHandler(FileSystemEventHandler):
-        """Handler that restarts the bot when Python or YAML files change."""
+class BotRestartHandler(FileSystemEventHandler):
+    """Handler that restarts the bot when Python or YAML files change."""
+    
+    def __init__(self, restart_callback):
+        self.restart_callback = restart_callback
+        self.last_restart = 0
+        self.debounce_seconds = 2  # Wait 2 seconds before restarting to avoid multiple restarts
         
-        def __init__(self, restart_callback):
-            self.restart_callback = restart_callback
-            self.last_restart = 0
-            self.debounce_seconds = 2  # Wait 2 seconds before restarting to avoid multiple restarts
+    def on_modified(self, event):
+        """Called when a file is modified."""
+        if event.is_directory:
+            return
             
-        def on_modified(self, event):
-            """Called when a file is modified."""
-            if event.is_directory:
-                return
-                
-            # Only restart for .py and .yaml files
-            if event.src_path.endswith(('.py', '.yaml', '.yml')):
-                current_time = time.time()
-                # Debounce: only restart if it's been at least debounce_seconds since last restart
-                if current_time - self.last_restart >= self.debounce_seconds:
-                    print(f"\n🔄 Detected change in: {event.src_path}")
-                    print("🔄 Restarting bot...")
-                    self.last_restart = current_time
-                    self.restart_callback()
+        # Only restart for .py and .yaml files
+        if event.src_path.endswith(('.py', '.yaml', '.yml')):
+            current_time = time.time()
+            # Debounce: only restart if it's been at least debounce_seconds since last restart
+            if current_time - self.last_restart >= self.debounce_seconds:
+                print(f"\n🔄 Detected change in: {event.src_path}")
+                print("🔄 Restarting bot...")
+                self.last_restart = current_time
+                self.restart_callback()
 
-    class BotRunner:
-        """Manages running and restarting the Discord bot process."""
+class BotRunner:
+    """Manages running and restarting the Discord bot process."""
+    
+    def __init__(self):
+        self.process = None
+        self.should_run = True
+        self.output_thread = None
+        self.restart_count = 0
+        self.last_restart_time = 0
+        self.max_consecutive_restarts = 5
+        self.restart_reset_time = 60  # Reset restart count after 60 seconds of successful running
         
-        def __init__(self):
-            self.process = None
-            self.should_run = True
-            self.output_thread = None
-            self.restart_count = 0
-            self.last_restart_time = 0
-            self.max_consecutive_restarts = 5
-            self.restart_reset_time = 60  # Reset restart count after 60 seconds of successful running
-            
-        def _read_output(self):
-            """Read and print output from the bot process in a separate thread."""
-            if self.process and self.process.stdout:
-                try:
-                    for line in iter(self.process.stdout.readline, ''):
-                        if line and self.should_run:
-                            print(line, end='')
-                        if self.process.poll() is not None:
-                            # Process ended
-                            break
-                except Exception as e:
-                    print(f"Error reading output: {e}")
-            
-        def start_bot(self, is_restart=False):
-            """Start the Discord bot process.
-            
-            Args:
-                is_restart: True if this is a restart, False for initial start
-            """
-            if self.process is not None:
-                self.stop_bot()
-            
-            # Check if we're restarting too frequently (only for restarts, not initial start)
-            if is_restart:
-                current_time = time.time()
-                if current_time - self.last_restart_time > self.restart_reset_time:
-                    # Reset restart count if enough time has passed
-                    self.restart_count = 0
-                
-                if self.restart_count >= self.max_consecutive_restarts:
-                    print(f"\n⚠️  Bot has restarted {self.restart_count} times in quick succession.")
-                    print("⚠️  There may be a persistent issue preventing the bot from starting.")
-                    print("⚠️  Please check the error messages above and fix the issue.")
-                    print("⚠️  The bot will pause for 30 seconds before trying again...")
-                    time.sleep(30)
-                    self.restart_count = 0
-                
-                self.last_restart_time = current_time
-                self.restart_count += 1
-            
-            print("🚀 Starting Discord bot...")
-            # Create environment with DISCORD_BOT_SUBPROCESS flag to prevent nested auto-restart
-            env = os.environ.copy()
-            env["DISCORD_BOT_SUBPROCESS"] = "1"
-            
-            # Use absolute path to ensure script can be found from any directory
-            script_path = Path(__file__).absolute()
-            
-            self.process = subprocess.Popen(
-                [sys.executable, str(script_path)],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
-                env=env
-            )
-            
-            # Start output reading in a separate thread to avoid blocking
-            self.output_thread = threading.Thread(target=self._read_output, daemon=True)
-            self.output_thread.start()
+    def _read_output(self):
+        """Read and print output from the bot process in a separate thread."""
+        if self.process and self.process.stdout:
+            try:
+                for line in iter(self.process.stdout.readline, ''):
+                    if line and self.should_run:
+                        print(line, end='')
+                    if self.process.poll() is not None:
+                        # Process ended
+                        break
+            except Exception as e:
+                print(f"Error reading output: {e}")
         
-        def stop_bot(self):
-            """Stop the Discord bot process."""
-            if self.process is not None and self.process.poll() is None:
-                print("\n🛑 Stopping bot...")
-                self.process.terminate()
-                try:
-                    self.process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    print("⚠️  Bot didn't stop gracefully, forcing...")
-                    self.process.kill()
-                    self.process.wait()
-                self.process = None
+    def start_bot(self, is_restart=False):
+        """Start the Discord bot process.
         
-        def restart_bot(self):
-            """Restart the Discord bot process."""
+        Args:
+            is_restart: True if this is a restart, False for initial start
+        """
+        if self.process is not None:
             self.stop_bot()
-            time.sleep(1)  # Brief pause before restart
-            if self.should_run:
-                self.start_bot(is_restart=True)
+        
+        # Check if we're restarting too frequently (only for restarts, not initial start)
+        if is_restart:
+            current_time = time.time()
+            if current_time - self.last_restart_time > self.restart_reset_time:
+                # Reset restart count if enough time has passed
+                self.restart_count = 0
+            
+            if self.restart_count >= self.max_consecutive_restarts:
+                print(f"\n⚠️  Bot has restarted {self.restart_count} times in quick succession.")
+                print("⚠️  There may be a persistent issue preventing the bot from starting.")
+                print("⚠️  Please check the error messages above and fix the issue.")
+                print("⚠️  The bot will pause for 30 seconds before trying again...")
+                time.sleep(30)
+                self.restart_count = 0
+            
+            self.last_restart_time = current_time
+            self.restart_count += 1
+        
+        print("🚀 Starting Discord bot...")
+        # Create environment with DISCORD_BOT_SUBPROCESS flag to prevent nested auto-restart
+        env = os.environ.copy()
+        env["DISCORD_BOT_SUBPROCESS"] = "1"
+        
+        # Use absolute path to ensure script can be found from any directory
+        script_path = Path(__file__).absolute()
+        
+        self.process = subprocess.Popen(
+            [sys.executable, str(script_path)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            env=env
+        )
+        
+        # Start output reading in a separate thread to avoid blocking
+        self.output_thread = threading.Thread(target=self._read_output, daemon=True)
+        self.output_thread.start()
+    
+    def stop_bot(self):
+        """Stop the Discord bot process."""
+        if self.process is not None and self.process.poll() is None:
+            print("\n🛑 Stopping bot...")
+            self.process.terminate()
+            try:
+                self.process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                print("⚠️  Bot didn't stop gracefully, forcing...")
+                self.process.kill()
+                self.process.wait()
+            self.process = None
+    
+    def restart_bot(self):
+        """Restart the Discord bot process."""
+        self.stop_bot()
+        time.sleep(1)  # Brief pause before restart
+        if self.should_run:
+            self.start_bot(is_restart=True)
 
 
 def run_with_auto_restart():
@@ -1218,24 +1013,7 @@ def main():
     # Read Discord token from .bot_token
     token_file = ".bot_token"
     if not os.path.exists(token_file):
-        print("="*80)
-        print("ERROR: .bot_token file not found in the current directory")
-        print("="*80)
-        print("\nTo use this Discord bot, you need:")
-        print("1. A Discord bot token")
-        print("2. Create a file named '.bot_token' in the current directory")
-        print("3. Put your Discord bot token in that file")
-        print("\nHow to get a Discord bot token:")
-        print("1. Go to https://discord.com/developers/applications")
-        print("2. Create a new application (or select an existing one)")
-        print("3. Go to the 'Bot' section")
-        print("4. Click 'Reset Token' to get your token")
-        print("5. Save the token to .bot_token")
-        print("\nBot Permissions Required:")
-        print("- Read Messages/View Channels")
-        print("- Send Messages")
-        print("- Read Message History")
-        print("="*80)
+        print("ERROR: .bot_token file not found")
         return
     
     with open(token_file, 'r') as f:
@@ -1248,18 +1026,7 @@ def main():
     # Get OpenRouter API key from environment
     api_key = os.getenv("OPENROUTER_API_KEY")
     if not api_key:
-        print("="*80)
         print("ERROR: OPENROUTER_API_KEY environment variable not set")
-        print("="*80)
-        print("\nTo use this bot, you need an OpenRouter API key:")
-        print("1. Sign up at https://openrouter.ai/")
-        print("2. Get your API key from https://openrouter.ai/keys")
-        print("3. Set the environment variable:")
-        print("   export OPENROUTER_API_KEY=your_api_key_here")
-        print("\nOr create a .env file:")
-        print("   cp .env.example .env")
-        print("   # Edit .env and add your API key")
-        print("="*80)
         return
     
     # Check if auto-restart is enabled in config
@@ -1267,15 +1034,11 @@ def main():
     
     # If running as a subprocess (from auto-restart wrapper), run normally
     # Otherwise check if auto-restart should be enabled
-    if auto_restart and HAS_WATCHDOG and not os.environ.get("DISCORD_BOT_SUBPROCESS"):
+    if auto_restart and not os.environ.get("DISCORD_BOT_SUBPROCESS"):
         # Run with auto-restart wrapper
         run_with_auto_restart()
     else:
         # Create and run the bot normally
-        if auto_restart and not HAS_WATCHDOG:
-            print("⚠️  Auto-restart is enabled in config.yaml but watchdog is not installed.")
-            print("⚠️  Install watchdog with: pip install watchdog")
-            print("⚠️  Running without auto-restart...\n")
         bot = ReActDiscordBot(token, api_key)
         bot.run()
 
