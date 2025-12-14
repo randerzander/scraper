@@ -418,10 +418,7 @@ class ReActAgent:
         self.token_stats = {}
     
     def reset_tracking(self):
-        """
-        Reset call tracking for a new query.
-        Should be called at the start of each new query.
-        """
+        """Reset tracking for a new query."""
         self._initialize_tracking()
     
     def get_tracking_data(self) -> Dict[str, Any]:
@@ -475,15 +472,11 @@ Question: {question}
 """
         
         # Add history
+        label = {"thought": "Thought", "action": "Action", "action_input": "Action Input", "observation": "Observation"}
         for entry in history:
-            if entry["type"] == "thought":
-                prompt += f"Thought: {entry['content']}\n"
-            elif entry["type"] == "action":
-                prompt += f"Action: {entry['content']}\n"
-            elif entry["type"] == "action_input":
-                prompt += f"Action Input: {entry['content']}\n"
-            elif entry["type"] == "observation":
-                prompt += f"Observation: {entry['content']}\n"
+            t = entry.get("type")
+            if t in label:
+                prompt += f"{label[t]}: {entry['content']}\n"
         
         return prompt
     
@@ -655,91 +648,45 @@ Question: {question}
         
         try:
             # Call the tool function with the action input
-            if action == "duckduckgo_search":
-                result = tool_function(action_input)
-                # Format results nicely
-                formatted_results = []
-                for i, r in enumerate(result[:5], 1):
+            result = tool_function(action_input)
+            # Optional per-tool formatting
+            def fmt_duck(res):
+                formatted = []
+                for i, r in enumerate(res[:5], 1):
                     if "error" in r:
-                        logger.error(f"Tool {action} failed: {r['error']}")
-                        
-                        # Track failed tool call
-                        tool_entry = {
-                            "type": "tool_call",
-                            "tool_name": action,
-                            "timestamp": time.time(),
-                            "input": action_input,
-                            "error": r["error"],
-                            "execution_time_seconds": round(time.time() - start_time, 2)
-                        }
-                        self.call_sequence.append(tool_entry)
-                        
-                        return r["error"]
-                    formatted_results.append(
-                        f"{i}. {r.get('title', 'N/A')}\n   URL: {r.get('href', 'N/A')}\n   {r.get('body', 'N/A')[:200]}..."
-                    )
-                logger.info(f"Tool {action} completed successfully, returned {len(formatted_results)} results")
-                output = "\n\n".join(formatted_results)
-                
-                # Track successful tool call
-                tool_entry = {
-                    "type": "tool_call",
-                    "tool_name": action,
-                    "timestamp": time.time(),
-                    "input": action_input,
-                    "output": output,
-                    "execution_time_seconds": round(time.time() - start_time, 2)
-                }
-                self.call_sequence.append(tool_entry)
-                
-                return output
+                        raise Exception(r["error"])  # handled below
+                    formatted.append(f"{i}. {r.get('title','N/A')}\n   URL: {r.get('href','N/A')}\n   {r.get('body','N/A')[:200]}...")
+                return "\n\n".join(formatted)
+            formatters = {"duckduckgo_search": fmt_duck, "scrape_url": lambda x: x}
+            output = (formatters.get(action, lambda x: str(x)))(result)
+            extra = ""
+            if action == "duckduckgo_search":
+                extra = f", returned {len(result)} results"
             elif action == "scrape_url":
-                result = tool_function(action_input)
-                logger.info(f"Tool {action} completed successfully, scraped {len(result)} characters")
-                
-                # Track successful tool call
-                tool_entry = {
-                    "type": "tool_call",
-                    "tool_name": action,
-                    "timestamp": time.time(),
-                    "input": action_input,
-                    "output": result,
-                    "execution_time_seconds": round(time.time() - start_time, 2)
-                }
-                self.call_sequence.append(tool_entry)
-                
-                return result
-            else:
-                result = str(tool_function(action_input))
-                logger.info(f"Tool {action} completed successfully")
-                
-                # Track successful tool call
-                tool_entry = {
-                    "type": "tool_call",
-                    "tool_name": action,
-                    "timestamp": time.time(),
-                    "input": action_input,
-                    "output": result,
-                    "execution_time_seconds": round(time.time() - start_time, 2)
-                }
-                self.call_sequence.append(tool_entry)
-                
-                return result
+                extra = f", scraped {len(output)} characters"
+            logger.info(f"Tool {action} completed successfully{extra}")
+            # Track successful tool call
+            self.call_sequence.append({
+                "type": "tool_call",
+                "tool_name": action,
+                "timestamp": time.time(),
+                "input": action_input,
+                "output": output,
+                "execution_time_seconds": round(time.time() - start_time, 2)
+            })
+            return output
         except Exception as e:
             logger.error(f"Tool {action} failed with exception: {str(e)}")
             error_msg = f"Error executing action: {str(e)}"
-            
             # Track failed tool call
-            tool_entry = {
+            self.call_sequence.append({
                 "type": "tool_call",
                 "tool_name": action,
                 "timestamp": time.time(),
                 "input": action_input,
                 "error": error_msg,
                 "execution_time_seconds": round(time.time() - start_time, 2)
-            }
-            self.call_sequence.append(tool_entry)
-            
+            })
             return error_msg
     
     def run(self, question: str, max_iterations: int = 5, verbose: bool = True, iteration_callback=None) -> str:

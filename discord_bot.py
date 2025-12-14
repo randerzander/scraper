@@ -216,10 +216,8 @@ class ReActDiscordBot:
                     # Build image context if images are present
                     image_context = ""
                     if image_urls:
-                        image_context = f"\n\n[Images attached: {len(image_urls)} image(s)]\n"
-                        for i, img_url in enumerate(image_urls, 1):
-                            image_context += f"Image {i} URL: {img_url}\n"
-                        image_context += "\nYou can use the 'caption_image' tool to analyze these images.\n"
+                        details = "\n".join([f"Image {i} URL: {u}" for i, u in enumerate(image_urls, 1)])
+                        image_context = f"\n\n[Images attached: {len(image_urls)} image(s)]\n{details}\n\nYou can use the 'caption_image' tool to analyze these images.\n"
                     
                     # Build question with context
                     question_with_context = f"""[You are a Discord bot named Usefool]
@@ -272,16 +270,7 @@ class ReActDiscordBot:
                     # Get tracking data from agent and merge with discord bot stats
                     agent_tracking = self.agent.get_tracking_data()
                     merged_token_stats = dict(self.current_query_token_stats)
-                    for model, stats in agent_tracking["token_stats"].items():
-                        if model not in merged_token_stats:
-                            merged_token_stats[model] = {
-                                "total_input_tokens": 0,
-                                "total_output_tokens": 0,
-                                "total_calls": 0
-                            }
-                        merged_token_stats[model]["total_input_tokens"] += stats["total_input_tokens"]
-                        merged_token_stats[model]["total_output_tokens"] += stats["total_output_tokens"]
-                        merged_token_stats[model]["total_calls"] += stats["total_calls"]
+                    self._merge_token_stats(agent_tracking["token_stats"], merged_token_stats)
                     
                     # Count tool calls by type from agent tracking
                     tool_call_counts = {}
@@ -308,20 +297,8 @@ class ReActDiscordBot:
                     complete_answer = answer + metadata
                     
                     # Discord has a 2000 character limit for messages - split if needed
-                    if len(complete_answer) > 1900:
-                        chunks = []
-                        remaining = complete_answer
-                        while len(remaining) > 1900:
-                            split_pos = remaining.rfind(' ', 0, 1900)
-                            split_pos = 1900 if split_pos == -1 else split_pos
-                            chunks.append(remaining[:split_pos])
-                            remaining = remaining[split_pos:].strip()
-                        if remaining:
-                            chunks.append(remaining)
-                        for chunk in chunks:
-                            await message.channel.send(chunk)
-                    else:
-                        await message.channel.send(complete_answer)
+                    for chunk in self._split_long_message(complete_answer, 1900):
+                        await message.channel.send(chunk)
                     
                     # Save query log after successful response
                     self._save_query_log(str(message.id), question, complete_answer, message.author.display_name)
@@ -530,6 +507,21 @@ class ReActDiscordBot:
         if "caption_image" in self.agent.tools:
             del self.agent.tools["caption_image"]
     
+    def _split_long_message(self, text: str, limit: int = 1900):
+        chunks = []
+        remaining = text
+        while len(remaining) > limit:
+            split_pos = remaining.rfind(' ', 0, limit)
+            split_pos = limit if split_pos == -1 else split_pos
+            chunks.append(remaining[:split_pos])
+            remaining = remaining[split_pos:].strip()
+        chunks.append(remaining)
+        return chunks
+
+    async def _remove_hourglasses(self, message):
+        await self._remove_reaction(message, "\u23f3")
+        await self._remove_reaction(message, "\u231b")
+
     def _call_llm(self, prompt: str, timeout: int = 10, model: str = None) -> str:
         """
         Helper method to call the LLM API.
@@ -619,13 +611,22 @@ class ReActDiscordBot:
         
         return content
     
-    def _lock_file(self, f):
-        """Lock a file for exclusive access."""
-        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+    from contextlib import contextmanager
     
-    def _unlock_file(self, f):
-        """Unlock a file."""
-        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+    @contextmanager
+    def _file_locked(self, f):
+        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+
+    def _merge_token_stats(self, src, dst):
+        for m, s in src.items():
+            d = dst.setdefault(m, {"total_input_tokens": 0, "total_output_tokens": 0, "total_calls": 0})
+            d["total_input_tokens"] += s.get("total_input_tokens", 0)
+            d["total_output_tokens"] += s.get("total_output_tokens", 0)
+            d["total_calls"] += s.get("total_calls", 0)
     
     async def _log_eval_question(self, message: discord.Message, user: discord.User):
         """
@@ -637,10 +638,7 @@ class ReActDiscordBot:
         """
         try:
             # Extract the question text
-            question = message.content
-            # Remove bot mentions
-            question = question.replace(f"<@{self.client.user.id}>", "").strip()
-            question = question.replace(f"<@!{self.client.user.id}>", "").strip()
+            question = self._remove_bot_mention(message.content)
             
             if not question:
                 return
@@ -660,13 +658,8 @@ class ReActDiscordBot:
             
             # Append to eval file with file locking for thread safety
             with open(self.EVAL_FILE, 'a', encoding='utf-8') as f:
-                try:
-                    # Acquire exclusive lock
-                    self._lock_file(f)
+                with self._file_locked(f):
                     f.write(json.dumps(eval_entry) + '\n')
-                finally:
-                    # Release lock
-                    self._unlock_file(f)
             
             print(f"{Fore.CYAN}[EVAL] Question logged: {question[:50]}...{Style.RESET_ALL}")
             logger.info(f"Eval question logged from {message.author.display_name}: {question}")
@@ -709,35 +702,26 @@ class ReActDiscordBot:
             
             # Read and update entries with shared lock
             with open(self.EVAL_FILE, 'r+', encoding='utf-8') as f:
-                try:
-                    # Acquire exclusive lock for read-modify-write
-                    self._lock_file(f)
-                    
-                    # Read all entries
+                with self._file_locked(f):
                     for line in f:
                         if line.strip():
                             entry = json.loads(line)
-                            # Update the entry if it matches the original message
                             if entry.get("message_id") == original_msg_id:
-                                entry["accepted_answer"] = answer
-                                entry["accepted_by"] = user.display_name
-                                entry["accepted_by_id"] = str(user.id)
-                                entry["accepted_at"] = datetime.now().isoformat()
+                                entry.update({
+                                    "accepted_answer": answer,
+                                    "accepted_by": user.display_name,
+                                    "accepted_by_id": str(user.id),
+                                    "accepted_at": datetime.now().isoformat()
+                                })
                                 updated = True
                                 print(f"{Fore.CYAN}[EVAL] Answer accepted for question: {entry['question'][:50]}...{Style.RESET_ALL}")
                                 logger.info(f"Accepted answer logged for message {original_msg_id}")
                             entries.append(entry)
-                    
-                    # Write back all entries if we updated one
                     if updated:
-                        # Truncate and rewrite
                         f.seek(0)
                         f.truncate()
                         for entry in entries:
                             f.write(json.dumps(entry) + '\n')
-                finally:
-                    # Release lock
-                    self._unlock_file(f)
             
             # Add confirmation reaction if update was successful
             if updated:
@@ -766,16 +750,7 @@ class ReActDiscordBot:
             
             # Merge token stats from agent and discord bot
             merged_token_stats = dict(self.current_query_token_stats)
-            for model, stats in agent_tracking["token_stats"].items():
-                if model not in merged_token_stats:
-                    merged_token_stats[model] = {
-                        "total_input_tokens": 0,
-                        "total_output_tokens": 0,
-                        "total_calls": 0
-                    }
-                merged_token_stats[model]["total_input_tokens"] += stats["total_input_tokens"]
-                merged_token_stats[model]["total_output_tokens"] += stats["total_output_tokens"]
-                merged_token_stats[model]["total_calls"] += stats["total_calls"]
+            self._merge_token_stats(agent_tracking["token_stats"], merged_token_stats)
             
             # Create the log entry
             log_entry = {
