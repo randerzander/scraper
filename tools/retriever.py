@@ -8,10 +8,11 @@ import logging
 import hashlib
 from pathlib import Path
 from typing import Optional
+from datetime import datetime
 import lancedb
-import requests
 import yaml
 import sentencepiece as spm
+import numpy as np
 
 
 logger = logging.getLogger(__name__)
@@ -26,11 +27,25 @@ DB_PATH = Path(__file__).parent.parent / "data" / "lancedb"
 TABLE_NAME = "embeddings"
 
 # Embedding model settings
-EMBEDDING_MODEL = "nomic-ai/nomic-embed-text-v1.5"
-EMBEDDING_DIM = 768
+EMBEDDING_DIM = 384  # all-MiniLM-L6-v2 dimension
 
 # Tokenizer (lazy loaded)
 _tokenizer = None
+_embedding_model = None
+
+
+def _get_embedding_model():
+    """Get or initialize the sentence transformer model."""
+    global _embedding_model
+    if _embedding_model is None:
+        try:
+            from sentence_transformers import SentenceTransformer
+            # Use a lightweight, fast model
+            _embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+        except ImportError:
+            logger.error("sentence-transformers not installed. Run: pip install sentence-transformers")
+            raise
+    return _embedding_model
 
 
 def _get_tokenizer():
@@ -113,7 +128,7 @@ def chunk(text: str, tokens: int = 1024) -> list[str]:
 
 def _get_embedding(text: str) -> list[float]:
     """
-    Generate embedding for text using the configured API.
+    Generate embedding for text using local sentence-transformers model.
     
     Args:
         text: Text to embed
@@ -121,28 +136,9 @@ def _get_embedding(text: str) -> list[float]:
     Returns:
         List of embedding values
     """
-    api_key_env = CONFIG.get("api_key_env", "OPENROUTER_API_KEY")
-    api_key = os.environ.get(api_key_env, "")
-    
-    base_url = CONFIG.get("base_url", "https://openrouter.ai/api/v1")
-    # Use embeddings endpoint if available, otherwise fall back to chat completions
-    embeddings_url = base_url.replace("/chat/completions", "/embeddings")
-    
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json"
-    }
-    
-    data = {
-        "model": EMBEDDING_MODEL,
-        "input": text
-    }
-    
-    response = requests.post(embeddings_url, headers=headers, json=data, timeout=30)
-    response.raise_for_status()
-    result = response.json()
-    
-    return result["data"][0]["embedding"]
+    model = _get_embedding_model()
+    embedding = model.encode(text, convert_to_numpy=True, show_progress_bar=False)
+    return embedding.tolist()
 
 
 def write(source: str, text: str, metadata: Optional[dict] = None, chunk_size: int = 1024) -> str:
@@ -189,7 +185,8 @@ def write(source: str, text: str, metadata: Optional[dict] = None, chunk_size: i
                 "text": chunk_text,
                 "vector": embedding,
                 "sequence_num": seq_num,
-                "metadata": chunk_metadata
+                "metadata": chunk_metadata,
+                "created_at": datetime.utcnow().isoformat()
             }
             chunk_data.append(data)
         

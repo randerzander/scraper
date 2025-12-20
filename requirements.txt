@@ -14,3 +14,5 @@ Wikipedia-API>=0.7.0
 ffmpeg-python
 lancedb>=0.26.0
 sentencepiece>=0.2.0
+sentence-transformers>=2.0.0
+duckdb>=1.0.0

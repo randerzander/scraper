@@ -26,6 +26,7 @@ def is_youtube_short(url: str) -> bool:
 def download_youtube_video(url: str, output_dir: str = "scratch"):
     """
     Download a YouTube video and its thumbnail using yt-dlp Python API.
+    Checks if video already exists in cache before downloading.
     
     Args:
         url: YouTube URL to download
@@ -50,6 +51,26 @@ def download_youtube_video(url: str, output_dir: str = "scratch"):
         with yt_dlp.YoutubeDL({'quiet': True, 'no_warnings': True}) as ydl:
             info = ydl.extract_info(url, download=False)
             video_id = info.get('id')
+        
+        # Check if video already exists in cache
+        cached_video = None
+        for ext in ['mp4', 'webm', 'mkv', 'flv']:
+            potential_file = output_path / f"{video_id}.{ext}"
+            if potential_file.exists():
+                cached_video = str(potential_file)
+                break
+        
+        # Check for cached thumbnail
+        cached_thumbnail = None
+        for ext in ['jpg', 'jpeg', 'png', 'webp']:
+            potential_thumb = output_path / f"{video_id}.{ext}"
+            if potential_thumb.exists():
+                cached_thumbnail = str(potential_thumb)
+                break
+        
+        # If both video and thumbnail exist, return cached versions
+        if cached_video:
+            return cached_video, video_id, cached_thumbnail
         
         # Use simple video ID-based naming to avoid filename issues
         simple_template = str(output_path / f"{video_id}.%(ext)s")
@@ -101,6 +122,7 @@ def download_youtube_video(url: str, output_dir: str = "scratch"):
 def download_youtube_comments(video_id: str, output_dir: str = "scratch", max_comments: int = 10):
     """
     Download the top comments from a YouTube video using yt-dlp Python API.
+    Checks if comments already exist in cache before downloading.
     
     Args:
         video_id: YouTube video ID
@@ -110,6 +132,18 @@ def download_youtube_comments(video_id: str, output_dir: str = "scratch", max_co
     Returns:
         List of comment dicts or None if failed
     """
+    # Check if comments already exist in cache
+    output_path = Path(output_dir)
+    output_path.mkdir(exist_ok=True)
+    comments_file = output_path / f"{video_id}_comments.json"
+    
+    if comments_file.exists():
+        try:
+            with open(comments_file, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except:
+            pass  # If file is corrupted, re-download
+    
     try:
         import yt_dlp
         import logging
@@ -144,11 +178,7 @@ def download_youtube_comments(video_id: str, output_dir: str = "scratch", max_co
             reverse=True
         )[:max_comments]
         
-        # Optionally save to file
-        output_path = Path(output_dir)
-        output_path.mkdir(exist_ok=True)
-        comments_file = output_path / f"{video_id}_comments.json"
-        
+        # Save to file
         with open(comments_file, 'w', encoding='utf-8') as f:
             json.dump(sorted_comments, f, indent=2, ensure_ascii=False)
         
@@ -164,6 +194,7 @@ def download_youtube_comments(video_id: str, output_dir: str = "scratch", max_co
 def get_youtube_transcript(video_id: str, output_dir: str = "scratch"):
     """
     Get transcript from YouTube's API (for regular videos with captions).
+    Checks if transcript already exists in cache before downloading.
     
     Args:
         video_id: YouTube video ID
@@ -172,6 +203,18 @@ def get_youtube_transcript(video_id: str, output_dir: str = "scratch"):
     Returns:
         Transcript text or None if failed
     """
+    # Check if transcript already exists in cache
+    output_path = Path(output_dir)
+    output_path.mkdir(exist_ok=True)
+    transcript_file = output_path / f"{video_id}_transcript.txt"
+    
+    if transcript_file.exists():
+        try:
+            with open(transcript_file, 'r', encoding='utf-8') as f:
+                return f.read()
+        except:
+            pass  # If file is corrupted, re-download
+    
     try:
         from youtube_transcript_api import YouTubeTranscriptApi
         from youtube_transcript_api._errors import TranscriptsDisabled, NoTranscriptFound
@@ -205,9 +248,6 @@ def get_youtube_transcript(video_id: str, output_dir: str = "scratch"):
         full_text = " ".join([entry.text for entry in transcript_data])
         
         # Save to file
-        output_path = Path(output_dir)
-        transcript_file = output_path / f"{video_id}_transcript.txt"
-        
         with open(transcript_file, 'w', encoding='utf-8') as f:
             f.write(full_text)
         
@@ -226,6 +266,7 @@ def get_youtube_transcript(video_id: str, output_dir: str = "scratch"):
 def transcribe_audio_with_whisper(video_path: str, model: str = "base", output_dir: str = None):
     """
     Transcribe a video file using pywhispercpp.
+    Checks if transcript already exists in cache before transcribing.
     
     Args:
         video_path: Path to the video file
@@ -240,6 +281,15 @@ def transcribe_audio_with_whisper(video_path: str, model: str = "base", output_d
         output_path = Path(output_dir)
     else:
         output_path = video_path.parent
+    
+    # Check if transcript already exists in cache
+    transcript_file = output_path / f"{video_path.stem}.txt"
+    if transcript_file.exists():
+        try:
+            with open(transcript_file, 'r', encoding='utf-8') as f:
+                return f.read()
+        except:
+            pass  # If file is corrupted, re-transcribe
     
     # Extract audio to WAV format
     audio_path = output_path / f"{video_path.stem}.wav"
@@ -296,7 +346,6 @@ def transcribe_audio_with_whisper(video_path: str, model: str = "base", output_d
         transcription = " ".join([segment.text for segment in segments]).strip()
         
         # Save transcription to file
-        transcript_file = output_path / f"{video_path.stem}.txt"
         with open(transcript_file, 'w', encoding='utf-8') as f:
             f.write(transcription)
         

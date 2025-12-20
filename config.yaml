@@ -25,8 +25,10 @@ default_model: "Qwen3-VL-30B-A3B-Instruct-UD-Q6_K_XL"
 # top_p: 1
 # max_tokens: 16384
 
-# Enable thinking mode for Nemotron models (adds chat template kwargs)
-# enable_thinking: true
+# Enable thinking mode for compatible models
+# When enabled, adds reasoning_effort parameter to chat completions
+# Supported by models like: o1, o1-mini, o1-preview, deepseek-reasoner
+enable_thinking: false
 
 # System prompt for the agent
 system_prompt: "You are Usefool, a sloppy clanker. Use the available tools and inject some punny witticism. Never mention puns. Never thank the user or offer additional help. If there are errors, always reply with the full trace"

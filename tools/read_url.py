@@ -14,6 +14,8 @@ import logging
 import requests
 import html2text
 from pyreadability import Readability
+from tools import retriever
+from pathlib import Path
 
 
 logger = logging.getLogger(__name__)
@@ -28,46 +30,61 @@ def read_url(url: str) -> str:
     - Wikipedia articles: Returns article content via API
     - Regular web pages: Returns HTML converted to markdown
     
+    Also writes all fetched content to the vector database.
+    
     Args:
         url: URL to read
         
     Returns:
         Content from the URL in markdown format
     """
+    content = None
+    
     # Check if it's a YouTube URL
     if 'youtube.com' in url or 'youtu.be' in url:
-        return _scrape_youtube_url(url)
+        content = _scrape_youtube_url(url)
     
     # Check if it's a Wikipedia URL
-    if 'wikipedia.org' in url:
-        return _scrape_wikipedia_url(url)
+    elif 'wikipedia.org' in url:
+        content = _scrape_wikipedia_url(url)
     
     # Regular web page scraping
-    try:
-        response = requests.get(url, timeout=10, headers={
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        })
-        response.raise_for_status()
-        logger.debug(f"URL fetch completed - Status: {response.status_code}, Content length: {len(response.text)} chars")
-        
-        # Use pyreadability to parse HTML and extract main content
-        reader = Readability(response.text)
-        result = reader.parse()
-        
-        # Convert HTML content to markdown using html2text
-        h = html2text.HTML2Text()
-        h.body_width = 0  # Don't wrap lines
-        h.ignore_links = False
-        markdown_content = h.handle(result['content'])
-        
-        # Add title if available
-        if result.get('title'):
-            markdown_content = f"# {result['title']}\n\n{markdown_content}"
-        
-        return markdown_content
-    except Exception as e:
-        logger.error(f"URL scraping failed for {url}: {str(e)}")
-        return f"Error scraping URL: {str(e)}"
+    else:
+        try:
+            response = requests.get(url, timeout=10, headers={
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            })
+            response.raise_for_status()
+            logger.debug(f"URL fetch completed - Status: {response.status_code}, Content length: {len(response.text)} chars")
+            
+            # Use pyreadability to parse HTML and extract main content
+            reader = Readability(response.text)
+            result = reader.parse()
+            
+            # Convert HTML content to markdown using html2text
+            h = html2text.HTML2Text()
+            h.body_width = 0  # Don't wrap lines
+            h.ignore_links = False
+            markdown_content = h.handle(result['content'])
+            
+            # Add title if available
+            if result.get('title'):
+                markdown_content = f"# {result['title']}\n\n{markdown_content}"
+            
+            content = markdown_content
+        except Exception as e:
+            logger.error(f"URL scraping failed for {url}: {str(e)}")
+            content = f"Error scraping URL: {str(e)}"
+    
+    # Write to vector database if content was successfully fetched
+    if content and not content.startswith("Error"):
+        try:
+            retriever.write(source=url, text=content)
+            logger.debug(f"Wrote content from {url} to vector database")
+        except Exception as e:
+            logger.warning(f"Failed to write to vector database: {str(e)}")
+    
+    return content
 
 
 def _scrape_youtube_url(url: str) -> str:
@@ -124,25 +141,87 @@ def _scrape_youtube_url(url: str) -> str:
         if is_youtube_short(url):
             logger.info(f"Processing YouTube Short: {video_id}")
             
-            # Use temporary directory for download
-            with tempfile.TemporaryDirectory() as tmpdir:
-                # Download the Short (also gets thumbnail)
-                video_path, _, thumbnail_path = download_youtube_video(url, output_dir=tmpdir)
-                
-                if not video_path:
-                    logger.error(f"Failed to download YouTube Short: {video_id}")
-                    return f"""# YouTube Short: {video_id}
+            # Use scratch directory for download
+            scratch_dir = Path("scratch")
+            scratch_dir.mkdir(exist_ok=True)
+            
+            # Download the Short (also gets thumbnail)
+            video_path, _, thumbnail_path = download_youtube_video(url, output_dir=str(scratch_dir))
+            
+            if not video_path:
+                logger.error(f"Failed to download YouTube Short: {video_id}")
+                return f"""# YouTube Short: {video_id}
 
 **Error:** Failed to download the video.
 
 URL: {url}
 Video ID: {video_id}"""
-                
-                # Transcribe with whisper
-                transcript = transcribe_audio_with_whisper(video_path, model="base", output_dir=tmpdir)
-                
-                if transcript:
-                    logger.info(f"Transcribed YouTube Short: {len(transcript)} chars")
+            
+            # Transcribe with whisper
+            transcript = transcribe_audio_with_whisper(video_path, model="base", output_dir=str(scratch_dir))
+            
+            if transcript:
+                logger.info(f"Transcribed YouTube Short: {len(transcript)} chars")
+            
+            # Always enrich Shorts with comments and thumbnail caption
+            logger.info("Enriching YouTube Short with thumbnail caption and comments...")
+            
+            # Get top 10 comments - save to scratch
+            comments = download_youtube_comments(video_id, output_dir=str(scratch_dir), max_comments=10)
+            
+            # Caption the thumbnail if available
+            thumbnail_caption = None
+            if thumbnail_path:
+                try:
+                    import os
+                    from agent import two_round_image_caption, MODEL_CONFIG
+                    
+                    # Get API key from environment
+                    api_key_env = MODEL_CONFIG.get("api_key_env", "OPENROUTER_API_KEY")
+                    api_key = os.environ.get(api_key_env, "")
+                    
+                    thumbnail_caption = two_round_image_caption(thumbnail_path, api_key)
+                    logger.info(f"Generated thumbnail caption: {len(thumbnail_caption)} chars")
+                except Exception as e:
+                    logger.warning(f"Failed to caption thumbnail: {e}")
+            
+            # Build the enriched Short response
+            result = f"""# YouTube Short: {video_id}
+
+URL: {url}
+Video ID: {video_id}
+
+"""
+            
+            # Add transcript section
+            if transcript:
+                result += f"""## Transcript (Auto-transcribed with Whisper)
+
+{transcript}
+
+"""
+            else:
+                result += "## Transcript\n\n*No transcript available*\n\n"
+            
+            # Add thumbnail caption section
+            if thumbnail_caption:
+                result += f"""## Thumbnail Caption
+
+{thumbnail_caption}
+
+"""
+            
+            # Add comments section
+            if comments:
+                result += "## Top 10 Comments\n\n"
+                for i, comment in enumerate(comments, 1):
+                    author = comment.get('author', 'Unknown')
+                    text = comment.get('text', '')
+                    likes = comment.get('like_count', 0)
+                    result += f"{i}. **{author}** ({likes} likes)\n   {text}\n\n"
+                logger.info(f"Added {len(comments)} top comments")
+            
+            return result
         else:
             # Try to get transcript for regular videos
             logger.info(f"Fetching YouTube transcript for: {video_id}")
@@ -200,40 +279,44 @@ If you need the transcript, you can:
                     # Continue anyway if we can't check duration
                 
                 # Fall back to downloading and transcribing with whisper
-                with tempfile.TemporaryDirectory() as tmpdir:
-                    logger.info(f"Downloading YouTube video for transcription...")
-                    video_path, _, thumbnail_path = download_youtube_video(url, output_dir=tmpdir)
-                    
-                    if not video_path:
-                        logger.error(f"Failed to download YouTube video: {video_id}")
-                        return f"""# YouTube Video: {video_id}
+                scratch_dir = Path("scratch")
+                scratch_dir.mkdir(exist_ok=True)
+                
+                logger.info(f"Downloading YouTube video for transcription...")
+                video_path, _, thumbnail_path = download_youtube_video(url, output_dir=str(scratch_dir))
+                
+                if not video_path:
+                    logger.error(f"Failed to download YouTube video: {video_id}")
+                    return f"""# YouTube Video: {video_id}
 
 **No transcript available** for this video and download failed.
 
 URL: {url}
 Video ID: {video_id}"""
-                    
-                    logger.info(f"Transcribing YouTube video audio with whisper...")
-                    transcript = transcribe_audio_with_whisper(video_path, model="base", output_dir=tmpdir)
-                    
-                    if not transcript:
-                        logger.error(f"Failed to transcribe YouTube video: {video_id}")
-                        return f"""# YouTube Video: {video_id}
+                
+                logger.info(f"Transcribing YouTube video audio with whisper...")
+                transcript = transcribe_audio_with_whisper(video_path, model="base", output_dir=str(scratch_dir))
+                
+                if not transcript:
+                    logger.error(f"Failed to transcribe YouTube video: {video_id}")
+                    return f"""# YouTube Video: {video_id}
 
 **Error:** No captions available and audio transcription failed.
 
 URL: {url}
 Video ID: {video_id}"""
-                    
-                    logger.info(f"Successfully transcribed YouTube video - {len(transcript)} chars")
+                
+                logger.info(f"Successfully transcribed YouTube video - {len(transcript)} chars")
         
         # If we have no transcript or a very short transcript (<1500 chars),
         # enrich with thumbnail caption and top comments
         if not transcript or len(transcript) < 1500:
             logger.info(f"Transcript is {'missing' if not transcript else 'short'} ({len(transcript) if transcript else 0} chars), enriching with comments and thumbnail...")
             
-            # Get top 10 comments
-            comments = download_youtube_comments(video_id, output_dir=tempfile.gettempdir(), max_comments=10)
+            # Get top 10 comments - save to scratch
+            scratch_dir = Path("scratch")
+            scratch_dir.mkdir(exist_ok=True)
+            comments = download_youtube_comments(video_id, output_dir=str(scratch_dir), max_comments=10)
             
             # Build the enriched response
             result = f"""# YouTube {'Short' if is_youtube_short(url) else 'Video'}: {video_id}

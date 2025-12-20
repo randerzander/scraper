@@ -180,7 +180,7 @@ def download_image(url: str, save_path: str = None) -> str:
     
     Args:
         url: URL of the image to download
-        save_path: Optional path to save the image. If None, saves to /tmp/
+        save_path: Optional path to save the image. If None, saves to scratch/
         
     Returns:
         Path to the downloaded image
@@ -197,7 +197,7 @@ def download_image(url: str, save_path: str = None) -> str:
             filename = url.split('/')[-1].split('?')[0]
             if not filename or '.' not in filename:
                 filename = f"image_{int(time.time())}.png"
-            save_path = f"/tmp/{filename}"
+            save_path = f"scratch/{filename}"
         
         # Ensure directory exists
         Path(save_path).parent.mkdir(parents=True, exist_ok=True)
@@ -315,9 +315,10 @@ def caption_image_with_vlm(image_url: str, api_key: str, prompt: str = None, mod
         if "max_tokens" in MODEL_CONFIG:
             data["max_tokens"] = MODEL_CONFIG["max_tokens"]
         
-        # Add thinking mode for Nemotron models if enabled
+        # Add thinking mode for compatible models if enabled
         if MODEL_CONFIG.get("enable_thinking", False):
-            data["extra_body"] = {"chat_template_kwargs": {"enable_thinking": True}}
+            # For OpenAI-compatible APIs that support reasoning_effort (o1, deepseek-reasoner, etc.)
+            data["reasoning_effort"] = "high"
         
         start_time = time.time()
         
@@ -575,9 +576,10 @@ class ReActAgent:
         if "max_tokens" in MODEL_CONFIG:
             data["max_tokens"] = MODEL_CONFIG["max_tokens"]
         
-        # Add thinking mode for Nemotron models if enabled
+        # Add thinking mode for compatible models if enabled
         if MODEL_CONFIG.get("enable_thinking", False):
-            data["extra_body"] = {"chat_template_kwargs": {"enable_thinking": True}}
+            # For OpenAI-compatible APIs that support reasoning_effort (o1, deepseek-reasoner, etc.)
+            data["reasoning_effort"] = "high"
         
         # Calculate input tokens (rough estimate)
         input_text = str(messages)

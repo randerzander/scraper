@@ -10,6 +10,9 @@ import re
 
 logger = logging.getLogger(__name__)
 
+# Suppress wikipediaapi INFO logs
+logging.getLogger('wikipediaapi').setLevel(logging.WARNING)
+
 
 def scrape_wikipedia(url: str) -> str:
     """
