@@ -7,34 +7,26 @@ import logging
 import time
 import requests
 from typing import List, Dict
+from utils import create_tool_spec
 
 
 logger = logging.getLogger(__name__)
 
 
 # Tool specification for agent registration
-TOOL_SPEC = {
-    "type": "function",
-    "function": {
-        "name": "web_search",
-        "description": "Search the web for information. Returns a list of numbered search results with title, URL, and description.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "The search query string"
-                },
-                "max_results": {
-                    "type": "integer",
-                    "description": "Maximum number of results to return (default: 10)",
-                    "default": 10
-                }
-            },
-            "required": ["query"]
+TOOL_SPEC = create_tool_spec(
+    name="web_search",
+    description="Search the web for information. Returns a list of numbered search results with title, URL, and description.",
+    parameters={
+        "query": "The search query string",
+        "max_results": {
+            "type": "integer",
+            "description": "Maximum number of results to return (default: 10)",
+            "default": 10
         }
-    }
-}
+    },
+    required=["query"]
+)
 
 
 def web_search(query: str, max_results: int = 10) -> List[Dict[str, str]]:

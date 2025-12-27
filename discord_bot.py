@@ -60,6 +60,7 @@ class ReActDiscordBot:
     DATA_DIR = Path("data")
     QA_FILE = DATA_DIR / "qa.jsonl"
     QUERY_LOGS_DIR = DATA_DIR / "query_logs"
+    USER_INFO_DIR = Path("user_info")
     
     async def _add_reaction(self, message, emoji: str):
         """Add a reaction to a message."""
@@ -78,6 +79,36 @@ class ReActDiscordBot:
         """Remove bot mentions from text."""
         text = text.replace(f"<@{self.client.user.id}>", "").strip()
         return text.replace(f"<@!{self.client.user.id}>", "").strip()
+    
+    def _get_user_info(self, username: str) -> str:
+        """
+        Get user info from their user info file.
+        
+        Args:
+            username: Discord username
+            
+        Returns:
+            User info as a string, or empty string if no info exists
+        """
+        try:
+            # Sanitize username to match the filename format used by add_userinfo
+            safe_username = "".join(c if c.isalnum() or c in ('-', '_') else '_' for c in username)
+            if not safe_username or safe_username.replace('_', '') == '':
+                safe_username = "unknown_user"
+            safe_username = safe_username[:50]
+            
+            filepath = self.USER_INFO_DIR / f"{safe_username}.txt"
+            
+            if filepath.exists() and filepath.is_file():
+                with open(filepath, 'r', encoding='utf-8') as f:
+                    content = f.read().strip()
+                if content:
+                    return f"\n\n[User Info for {username}]\n{content}\n"
+            return ""
+        except Exception as e:
+            logger.error(f"Error reading user info for {username}: {e}")
+            return ""
+    
     
     def __init__(self, token: str, api_key: str):
         """
@@ -276,224 +307,252 @@ class ReActDiscordBot:
             if message.author == self.client.user:
                 return
             
-            # Only respond to messages that mention the bot
-            if self.client.user.mentioned_in(message):
+            # Determine if this is a query
+            is_query = False
+            question = None
+            
+            # DMs are always queries
+            if isinstance(message.channel, discord.DMChannel):
+                is_query = True
+                question = message.content
+                logger.info(f"DM received from {message.author.display_name}: {question}")
+            # In guilds, only respond to mentions
+            elif self.client.user.mentioned_in(message):
+                is_query = True
                 question = self._remove_bot_mention(message.content)
-                
-                # Translate user mentions from <@USER_ID> to @username
+            
+            if not is_query:
+                return
+            
+            # Translate user mentions from <@USER_ID> to @username (only in guilds)
+            if message.guild:
                 question = await translate_user_mentions(question, message.guild)
+            
+            # Check for image attachments
+            image_urls = self._extract_image_urls(message)
+            for url in image_urls:
+                logger.info(f"Found image attachment: {url}")
+            
+            # If there are images but no question, provide a default question
+            if not question and image_urls:
+                question = "What do you see in this image?"
+            
+            await self._add_reaction(message, "⏳")
+            
+            # Log the user query in red
+            print(f"{Fore.RED}[USER QUERY] {message.author.display_name}: {question}{Style.RESET_ALL}")
+            logger.info(f"User query received from {message.author.display_name}: {question}")
+            
+            # Reset tracking for new query
+            self._reset_query_tracking()
+            
+            # Track start time for total response time
+            query_start_time = time.time()
+            
+            # Get reply chain context if this is a reply (also gets images from reply chain)
+            reply_context, reply_image_urls = await get_reply_chain(message)
+            
+            # Combine images from current message and reply chain
+            if reply_image_urls:
+                image_urls.extend(reply_image_urls)
+                logger.info(f"Added {len(reply_image_urls)} image(s) from reply chain")
+            
+            try:
+                # Build image context if images are present
+                image_context = ""
+                if image_urls:
+                    details = "\n".join([f"Image {i} URL: {u}" for i, u in enumerate(image_urls, 1)])
+                    image_context = f"\n\n[Images attached: {len(image_urls)} image(s)]\n{details}\n\nYou can use the 'caption_image' tool to analyze these images.\n"
                 
-                # Check for image attachments
-                image_urls = self._extract_image_urls(message)
-                for url in image_urls:
-                    logger.info(f"Found image attachment: {url}")
+                # Get user info
+                user_info = self._get_user_info(message.author.display_name)
                 
-                # If there are images but no question, provide a default question
-                if not question and image_urls:
-                    question = "What do you see in this image?"
+                # Build question with context
+                question_with_context = f"""[You are a Discord bot named Usefool]
+
+If anyone shares personal information (preferences, context, facts, etc.), consider using the add_userinfo tool to save it for future conversations. You can save info about the current user or specify a different username if they're talking about someone else. This helps you provide more personalized assistance.
+{image_context}{user_info}
+{reply_context}User question: {question}"""
                 
-                await self._add_reaction(message, "⏳")
+                # Register channel history tool for this message processing
+                self._register_channel_history_tool(message.channel, message.id)
                 
-                # Log the user query in red
-                print(f"{Fore.RED}[USER QUERY] {message.author.display_name}: {question}{Style.RESET_ALL}")
-                logger.info(f"User query received from {message.author.display_name}: {question}")
+                # Register user info tool for this user
+                self._register_userinfo_tool(message.author.display_name)
                 
-                # Reset tracking for new query
-                self._reset_query_tracking()
+                # Register image caption tool if images are present
+                if image_urls:
+                    self._register_image_caption_tool(question)
                 
-                # Track start time for total response time
+                # Create iteration callback to alternate hourglass reactions
+                async def update_hourglass(iteration_num):
+                    if iteration_num > 0:
+                        prev_emoji = "⏳" if iteration_num % 2 == 1 else "⌛"
+                        await self._remove_reaction(message, prev_emoji)
+                    new_emoji = "⌛" if iteration_num % 2 == 1 else "⏳"
+                    await self._add_reaction(message, new_emoji)
+                
+                # Wrapper to make callback thread-safe for asyncio.to_thread
+                def iteration_callback(iteration_num):
+                    # Schedule the coroutine in the event loop
+                    asyncio.run_coroutine_threadsafe(update_hourglass(iteration_num), self.client.loop)
+                
+                # Record when query started for auto-attaching generated files
                 query_start_time = time.time()
                 
-                # Get reply chain context if this is a reply (also gets images from reply chain)
-                reply_context, reply_image_urls = await get_reply_chain(message)
+                # Use the ReAct agent to answer the question (verbose=False to reduce log noise)
+                # Run in a thread pool to avoid blocking the Discord event loop and heartbeat
+                answer = await asyncio.to_thread(
+                    self.agent.run, question_with_context, max_iterations=30, verbose=False, iteration_callback=iteration_callback
+                )
                 
-                # Combine images from current message and reply chain
-                if reply_image_urls:
-                    image_urls.extend(reply_image_urls)
-                    logger.info(f"Added {len(reply_image_urls)} image(s) from reply chain")
+                # Unregister channel history tool to avoid memory leaks
+                self._unregister_channel_history_tool()
                 
-                try:
-                    # Build image context if images are present
-                    image_context = ""
-                    if image_urls:
-                        details = "\n".join([f"Image {i} URL: {u}" for i, u in enumerate(image_urls, 1)])
-                        image_context = f"\n\n[Images attached: {len(image_urls)} image(s)]\n{details}\n\nYou can use the 'caption_image' tool to analyze these images.\n"
-                    
-                    # Build question with context
-                    question_with_context = f"""[You are a Discord bot named Usefool]
-{image_context}
-{reply_context}User question: {question}"""
-                    
-                    # Register channel history tool for this message processing
-                    self._register_channel_history_tool(message.channel, message.id)
-                    
-                    # Register image caption tool if images are present
-                    if image_urls:
-                        self._register_image_caption_tool(question)
-                    
-                    # Create iteration callback to alternate hourglass reactions
-                    async def update_hourglass(iteration_num):
-                        if iteration_num > 0:
-                            prev_emoji = "⏳" if iteration_num % 2 == 1 else "⌛"
-                            await self._remove_reaction(message, prev_emoji)
-                        new_emoji = "⌛" if iteration_num % 2 == 1 else "⏳"
-                        await self._add_reaction(message, new_emoji)
-                    
-                    # Wrapper to make callback thread-safe for asyncio.to_thread
-                    def iteration_callback(iteration_num):
-                        # Schedule the coroutine in the event loop
-                        asyncio.run_coroutine_threadsafe(update_hourglass(iteration_num), self.client.loop)
-                    
-                    # Record when query started for auto-attaching generated files
-                    query_start_time = time.time()
-                    
-                    # Use the ReAct agent to answer the question (verbose=False to reduce log noise)
-                    # Run in a thread pool to avoid blocking the Discord event loop and heartbeat
-                    answer = await asyncio.to_thread(
-                        self.agent.run, question_with_context, max_iterations=30, verbose=False, iteration_callback=iteration_callback
-                    )
-                    
-                    # Unregister channel history tool to avoid memory leaks
-                    self._unregister_channel_history_tool()
-                    
-                    # Unregister image caption tool if it was registered
-                    if image_urls:
-                        self._unregister_image_caption_tool()
-                    
-                    # Log the final response in green with character count
-                    answer_length = len(answer)
-                    print(f"{Fore.GREEN}[FINAL RESPONSE] ({answer_length} chars) {answer[:100]}...{Style.RESET_ALL}" if answer_length > 100 else f"{Fore.GREEN}[FINAL RESPONSE] ({answer_length} chars) {answer}{Style.RESET_ALL}")
-                    
-                    # Process response based on length
-                    if answer_length >= 1500:
-                        # Rewrite concisely + add TL;DR
-                        print(f"{Fore.YELLOW}[CONDENSING] Response is {answer_length} chars, rewriting concisely...{Style.RESET_ALL}")
-                        condensed = await self._condense_response(answer)
-                        tldr = await self._generate_tldr(answer)
-                        answer = f"{condensed}\n\n{tldr}"
-                        print(f"{Fore.YELLOW}[CONDENSED] {answer_length} → {len(answer)} chars{Style.RESET_ALL}")
-                    elif answer_length >= 750:
-                        # Add TL;DR only
-                        tldr, tldr_runtime = await self._generate_tldr(answer)
-                        answer = f"{answer}\n\n{tldr}"
-                        print(f"{Fore.YELLOW}[TLDR] {answer_length} → {len(answer)} chars, Response time: {tldr_runtime:.2f}s{Style.RESET_ALL}")
-                    
-                    # Remove both hourglass emoji reactions
-                    await self._remove_reaction(message, "⏳")
-                    await self._remove_reaction(message, "⌛")
-                    
-                    # Calculate total response time
-                    total_response_time = time.time() - query_start_time
-                    
-                    # Get tracking data from agent and merge with discord bot stats
-                    agent_tracking = self.agent.get_tracking_data()
-                    merged_token_stats = dict(self.current_query_token_stats)
-                    self._merge_token_stats(agent_tracking["token_stats"], merged_token_stats)
-                    
-                    # Count tool calls by type from agent tracking
-                    tool_call_counts = {}
-                    for entry in agent_tracking["call_sequence"]:
-                        if entry["type"] == "tool_call":
-                            tool_name = entry["tool_name"]
-                            tool_call_counts[tool_name] = tool_call_counts.get(tool_name, 0) + 1
-                    
-                    # Calculate totals across all models
-                    total_input_tokens = sum(stats["total_input_tokens"] for stats in merged_token_stats.values())
-                    total_output_tokens = sum(stats["total_output_tokens"] for stats in merged_token_stats.values())
-                    
-                    # Format metadata in small font with call counts per model
-                    models_info = [f"{m.split('/')[-1]} ({s['total_calls']}x)" 
-                                   for m, s in merged_token_stats.items()]
-                    models_used = " • ".join(models_info)
-                    
-                    # Format tool calls breakdown
-                    tool_calls_info = ""
-                    if tool_call_counts:
-                        tool_calls_info = f" • Tools: {', '.join(f'{t}: {c}' for t, c in tool_call_counts.items())}"
-                    
-                    metadata = f"\n\n-# *Models: {models_used} • Tokens: {total_input_tokens} in / {total_output_tokens} out{tool_calls_info} • Time: {round(total_response_time)}s*"
-                    complete_answer = answer + metadata
-                    
-                    # Convert @username references to Discord mentions before sending
-                    complete_answer = await convert_usernames_to_mentions(complete_answer, message.guild)
-                    
-                    # Auto-attach any images created in scratch/ after query started
-                    files_to_attach = []
-                    import re
-                    import glob
-                    
-                    project_root = Path(__file__).parent
-                    scratch_dir = project_root / 'scratch'
-                    
-                    # Prefixes used by tools for cache/intermediate files (don't auto-attach)
-                    tool_prefixes = ('YOUTUBE_', 'CODE_', 'DOWNLOAD_')
-                    
-                    # Find all image files in scratch/
-                    image_extensions = ['*.jpg', '*.jpeg', '*.png', '*.gif', '*.bmp', '*.webp']
-                    for ext in image_extensions:
-                        for img_path in scratch_dir.glob(ext):
-                            # Skip files with tool prefixes (cache/intermediate files)
-                            if img_path.name.startswith(tool_prefixes):
-                                continue
-                            # Check if file was created/modified after query started
-                            if img_path.stat().st_mtime > query_start_time:
-                                try:
-                                    files_to_attach.append(discord.File(str(img_path)))
-                                    logger.info(f"Auto-attaching recent image: {img_path.name}")
-                                except Exception as e:
-                                    logger.error(f"Error attaching image {img_path.name}: {e}")
-                    
-                    # Also check for explicit "attach filename" instructions in response
-                    attachment_pattern = r'attach\s+(?:scratch/)?([^\s,]+\.\w+)'
-                    matches = re.findall(attachment_pattern, complete_answer, re.IGNORECASE)
-                    
-                    if matches:
-                        for filename in matches:
-                            full_path = scratch_dir / filename
-                            # Only attach if not already in files_to_attach
-                            if full_path.exists() and full_path.is_file():
-                                # Check if already added by timestamp check
-                                already_attached = any(f.filename == filename for f in files_to_attach)
-                                if not already_attached:
-                                    try:
-                                        files_to_attach.append(discord.File(str(full_path)))
-                                        logger.info(f"Attaching explicitly mentioned file: {filename}")
-                                    except Exception as e:
-                                        logger.error(f"Error attaching file {filename}: {e}")
-                            else:
-                                logger.warning(f"File not found for attachment: scratch/{filename}")
-                        
-                        # Remove the attach instructions from the message
-                        complete_answer = re.sub(r'attach\s+(?:scratch/)?[^\s,]+\.\w+', '', complete_answer, flags=re.IGNORECASE).strip()
-                    
-                    # Discord has a 2000 character limit for messages - split if needed
-                    chunks = self._split_long_message(complete_answer, 1900)
-                    
-                    # Send first chunk with attachments, rest without
-                    if chunks:
-                        await message.channel.send(chunks[0], files=files_to_attach if files_to_attach else None)
-                        for chunk in chunks[1:]:
-                            await message.channel.send(chunk)
-                    
-                    # Save query log after successful response (path already logged above)
-                    self._save_query_log(str(message.id), question, complete_answer, message.author.display_name)
+                # Unregister user info tool
+                self._unregister_userinfo_tool()
                 
-                except Exception as e:
-                    # Unregister channel history tool in case of error
-                    self._unregister_channel_history_tool()
-                    
-                    # Unregister image caption tool in case of error
+                # Unregister image caption tool if it was registered
+                if image_urls:
                     self._unregister_image_caption_tool()
+                
+                # Log the final response in green with character count
+                answer_length = len(answer)
+                print(f"{Fore.GREEN}[FINAL RESPONSE] ({answer_length} chars) {answer[:100]}...{Style.RESET_ALL}" if answer_length > 100 else f"{Fore.GREEN}[FINAL RESPONSE] ({answer_length} chars) {answer}{Style.RESET_ALL}")
+                
+                # Process response based on length
+                if answer_length >= 1500:
+                    # Rewrite concisely + add TL;DR
+                    print(f"{Fore.YELLOW}[CONDENSING] Response is {answer_length} chars, rewriting concisely...{Style.RESET_ALL}")
+                    condensed = await self._condense_response(answer)
+                    tldr, tldr_runtime = await self._generate_tldr(answer)
+                    answer = f"{condensed}\n\n{tldr}"
+                    print(f"{Fore.YELLOW}[CONDENSED] {answer_length} → {len(answer)} chars{Style.RESET_ALL}")
+                elif answer_length >= 750:
+                    # Add TL;DR only
+                    tldr, tldr_runtime = await self._generate_tldr(answer)
+                    answer = f"{answer}\n\n{tldr}"
+                    print(f"{Fore.YELLOW}[TLDR] {answer_length} → {len(answer)} chars, Response time: {tldr_runtime:.2f}s{Style.RESET_ALL}")
+                
+                # Remove both hourglass emoji reactions
+                await self._remove_reaction(message, "⏳")
+                await self._remove_reaction(message, "⌛")
+                
+                # Calculate total response time
+                total_response_time = time.time() - query_start_time
+                
+                # Get tracking data from agent and merge with discord bot stats
+                agent_tracking = self.agent.get_tracking_data()
+                merged_token_stats = dict(self.current_query_token_stats)
+                self._merge_token_stats(agent_tracking["token_stats"], merged_token_stats)
+                
+                # Count tool calls by type from agent tracking
+                tool_call_counts = {}
+                for entry in agent_tracking["call_sequence"]:
+                    if entry["type"] == "tool_call":
+                        tool_name = entry["tool_name"]
+                        tool_call_counts[tool_name] = tool_call_counts.get(tool_name, 0) + 1
+                
+                # Calculate totals across all models
+                total_input_tokens = sum(stats["total_input_tokens"] for stats in merged_token_stats.values())
+                total_output_tokens = sum(stats["total_output_tokens"] for stats in merged_token_stats.values())
+                
+                # Format metadata in small font with call counts per model
+                models_info = [f"{m.split('/')[-1]} ({s['total_calls']}x)" 
+                               for m, s in merged_token_stats.items()]
+                models_used = " • ".join(models_info)
+                
+                # Format tool calls breakdown
+                tool_calls_info = ""
+                if tool_call_counts:
+                    tool_calls_info = f" • Tools: {', '.join(f'{t}: {c}' for t, c in tool_call_counts.items())}"
+                
+                metadata = f"\n\n-# *Models: {models_used} • Tokens: {total_input_tokens} in / {total_output_tokens} out{tool_calls_info} • Time: {round(total_response_time)}s*"
+                complete_answer = answer + metadata
+                
+                # Convert @username references to Discord mentions before sending
+                complete_answer = await convert_usernames_to_mentions(complete_answer, message.guild)
+                
+                # Auto-attach any images created in scratch/ after query started
+                files_to_attach = []
+                import re
+                import glob
+                
+                project_root = Path(__file__).parent
+                scratch_dir = project_root / 'scratch'
+                
+                # Prefixes used by tools for cache/intermediate files (don't auto-attach)
+                tool_prefixes = ('YOUTUBE_', 'CODE_', 'DOWNLOAD_')
+                
+                # Find all image files in scratch/
+                image_extensions = ['*.jpg', '*.jpeg', '*.png', '*.gif', '*.bmp', '*.webp']
+                for ext in image_extensions:
+                    for img_path in scratch_dir.glob(ext):
+                        # Skip files with tool prefixes (cache/intermediate files)
+                        if img_path.name.startswith(tool_prefixes):
+                            continue
+                        # Check if file was created/modified after query started
+                        if img_path.stat().st_mtime > query_start_time:
+                            try:
+                                files_to_attach.append(discord.File(str(img_path)))
+                                logger.info(f"Auto-attaching recent image: {img_path.name}")
+                            except Exception as e:
+                                logger.error(f"Error attaching image {img_path.name}: {e}")
+                
+                # Also check for explicit "attach filename" instructions in response
+                attachment_pattern = r'attach\s+(?:scratch/)?([^\s,]+\.\w+)'
+                matches = re.findall(attachment_pattern, complete_answer, re.IGNORECASE)
+                
+                if matches:
+                    for filename in matches:
+                        full_path = scratch_dir / filename
+                        # Only attach if not already in files_to_attach
+                        if full_path.exists() and full_path.is_file():
+                            # Check if already added by timestamp check
+                            already_attached = any(f.filename == filename for f in files_to_attach)
+                            if not already_attached:
+                                try:
+                                    files_to_attach.append(discord.File(str(full_path)))
+                                    logger.info(f"Attaching explicitly mentioned file: {filename}")
+                                except Exception as e:
+                                    logger.error(f"Error attaching file {filename}: {e}")
+                        else:
+                            logger.warning(f"File not found for attachment: scratch/{filename}")
                     
-                    await self._remove_reaction(message, "⏳")
-                    await message.channel.send(f"❌ Error: {str(e)}")
-                    
-                    # Log full traceback
-                    import traceback
-                    logger.error(f"Error processing question: {e}")
-                    logger.error(traceback.format_exc())
-                    print(f"Error processing question: {e}")
-                    traceback.print_exc()
+                    # Remove the attach instructions from the message
+                    complete_answer = re.sub(r'attach\s+(?:scratch/)?[^\s,]+\.\w+', '', complete_answer, flags=re.IGNORECASE).strip()
+                
+                # Discord has a 2000 character limit for messages - split if needed
+                chunks = self._split_long_message(complete_answer, 1900)
+                
+                # Send first chunk with attachments, rest without
+                if chunks:
+                    await message.channel.send(chunks[0], files=files_to_attach if files_to_attach else None)
+                    for chunk in chunks[1:]:
+                        await message.channel.send(chunk)
+                
+                # Save query log after successful response (path already logged above)
+                self._save_query_log(str(message.id), question, complete_answer, message.author.display_name)
+            
+            except Exception as e:
+                # Unregister channel history tool in case of error
+                self._unregister_channel_history_tool()
+                
+                # Unregister user info tool in case of error
+                self._unregister_userinfo_tool()
+                
+                # Unregister image caption tool in case of error
+                self._unregister_image_caption_tool()
+                
+                await self._remove_reaction(message, "⏳")
+                await message.channel.send(f"❌ Error: {str(e)}")
+                
+                # Log full traceback
+                import traceback
+                logger.error(f"Error processing question: {e}")
+                logger.error(traceback.format_exc())
+                print(f"Error processing question: {e}")
+                traceback.print_exc()
         
         @self.client.event
         async def on_reaction_add(reaction, user):
@@ -620,24 +679,19 @@ class ReActDiscordBot:
         self.agent.tool_functions["read_channel_history"] = tool_function
         
         # Add to tools list in OpenAI format
-        tool_spec = {
-            "type": "function",
-            "function": {
-                "name": "read_channel_history",
-                "description": "Read the last N messages from the Discord channel history to understand recent conversation context",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "count": {
-                            "type": "integer",
-                            "description": "Number of messages to read (default: 10, max: 50)",
-                            "default": 10
-                        }
-                    },
-                    "required": []
+        from utils import create_tool_spec
+        tool_spec = create_tool_spec(
+            name="read_channel_history",
+            description="Read recent Discord messages for conversation context.",
+            parameters={
+                "count": {
+                    "type": "integer",
+                    "description": "Number of messages to read (max: 50)",
+                    "default": 10
                 }
-            }
-        }
+            },
+            required=[]
+        )
         self.agent.tools.append(tool_spec)
     
     def _unregister_channel_history_tool(self):
@@ -651,6 +705,94 @@ class ReActDiscordBot:
         
         # Remove from tools list
         self.agent.tools = [t for t in self.agent.tools if t["function"]["name"] != "read_channel_history"]
+    
+    def _create_userinfo_tool(self, current_username: str):
+        """
+        Create a user info tool with the current user's username as default.
+        
+        Args:
+            current_username: The Discord username of the current user (used as default)
+            
+        Returns:
+            A function that saves user info for any specified user
+        """
+        from tools.user_info import add_userinfo
+        
+        def save_userinfo(info: str, username: str = None) -> str:
+            """
+            Save information about a user for future conversations.
+            
+            Args:
+                info: The information to store about the user
+                username: The username to save info about (defaults to current user if not specified)
+                
+            Returns:
+                Success or error message
+            """
+            target_username = username if username else current_username
+            return add_userinfo(target_username, info)
+        
+        return save_userinfo
+    
+    def _create_read_userinfo_tool(self, current_username: str):
+        """
+        Create a read user info tool with the current user's username as default.
+        
+        Args:
+            current_username: The Discord username of the current user (used as default)
+            
+        Returns:
+            A function that reads user info for any specified user
+        """
+        from tools.user_info import read_userinfo
+        
+        def get_userinfo(username: str = None) -> str:
+            """
+            Read stored information about a user.
+            
+            Args:
+                username: The username to read info about (defaults to current user if not specified)
+                
+            Returns:
+                The stored user information or an error message
+            """
+            target_username = username if username else current_username
+            return read_userinfo(target_username)
+        
+        return get_userinfo
+    
+    def _register_userinfo_tool(self, username: str):
+        """
+        Register the user info tools with the agent.
+        
+        Args:
+            username: The Discord username of the current user (used as default)
+        """
+        from tools.user_info import ADD_USERINFO_SPEC, READ_USERINFO_SPEC
+        
+        # Register add_userinfo tool
+        add_tool_function = self._create_userinfo_tool(username)
+        self.agent.tool_functions["add_userinfo"] = add_tool_function
+        self.agent.tools.append(ADD_USERINFO_SPEC)
+        
+        # Register read_userinfo tool
+        read_tool_function = self._create_read_userinfo_tool(username)
+        self.agent.tool_functions["read_userinfo"] = read_tool_function
+        self.agent.tools.append(READ_USERINFO_SPEC)
+    
+    def _unregister_userinfo_tool(self):
+        """
+        Remove the user info tools from the agent.
+        This should be called after processing each message.
+        """
+        # Remove from tool_functions dict
+        if "add_userinfo" in self.agent.tool_functions:
+            del self.agent.tool_functions["add_userinfo"]
+        if "read_userinfo" in self.agent.tool_functions:
+            del self.agent.tool_functions["read_userinfo"]
+        
+        # Remove from tools list
+        self.agent.tools = [t for t in self.agent.tools if t["function"]["name"] not in ["add_userinfo", "read_userinfo"]]
     
     def _create_image_caption_tool(self, user_query: str):
         """
@@ -708,23 +850,15 @@ class ReActDiscordBot:
         self.agent.tool_functions["caption_image"] = tool_function
         
         # Add to tools list in OpenAI format
-        tool_spec = {
-            "type": "function",
-            "function": {
-                "name": "caption_image",
-                "description": "Caption and analyze an image using a Vision Language Model. Provides detailed description based on the user's query context.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "image_url": {
-                            "type": "string",
-                            "description": "The URL of the image to caption"
-                        }
-                    },
-                    "required": ["image_url"]
-                }
-            }
-        }
+        from utils import create_tool_spec
+        tool_spec = create_tool_spec(
+            name="caption_image",
+            description="Describe and analyze an image using vision AI.",
+            parameters={
+                "image_url": "URL of the image"
+            },
+            required=["image_url"]
+        )
         self.agent.tools.append(tool_spec)
     
     def _unregister_image_caption_tool(self):

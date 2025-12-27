@@ -61,3 +61,45 @@ def setup_logging(level=logging.INFO, format_string='%(asctime)s - %(name)s - %(
     root_logger.addHandler(handler)
     
     return root_logger
+
+
+def create_tool_spec(name, description, parameters=None, required=None):
+    """
+    Create an OpenAI-format tool specification.
+    
+    Args:
+        name: Tool function name
+        description: Brief description of what the tool does
+        parameters: Dict of parameter specs, e.g. {"username": {"type": "string", "description": "..."}}
+        required: List of required parameter names (default: all parameters)
+    
+    Returns:
+        Tool spec dict in OpenAI format
+    """
+    if parameters is None:
+        parameters = {}
+    
+    if required is None:
+        required = list(parameters.keys())
+    
+    properties = {}
+    for param_name, param_config in parameters.items():
+        if isinstance(param_config, str):
+            # Shorthand: just a description string
+            properties[param_name] = {"type": "string", "description": param_config}
+        else:
+            # Full config dict
+            properties[param_name] = param_config
+    
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": description,
+            "parameters": {
+                "type": "object",
+                "properties": properties,
+                "required": required
+            }
+        }
+    }

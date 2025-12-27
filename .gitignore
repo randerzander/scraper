@@ -16,3 +16,4 @@ data/*.jsonl
 data/query_logs/*.json
 model_config.yaml
 .bot_token
+user_data/*

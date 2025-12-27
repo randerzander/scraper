@@ -5,29 +5,21 @@ File reading tool for the agent.
 
 import logging
 from pathlib import Path
+from utils import create_tool_spec
 
 
 logger = logging.getLogger(__name__)
 
 
 # Tool specification for agent registration
-TOOL_SPEC = {
-    "type": "function",
-    "function": {
-        "name": "read_file",
-        "description": "Read a file from the current working directory. Maximum file size is 1 MB.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "filepath": {
-                    "type": "string",
-                    "description": "File path relative to the current working directory (e.g., 'README.md', 'src/main.py')"
-                }
-            },
-            "required": ["filepath"]
-        }
-    }
-}
+TOOL_SPEC = create_tool_spec(
+    name="read_file",
+    description="Read a file from the current working directory. Maximum file size is 1 MB.",
+    parameters={
+        "filepath": "File path relative to the current working directory (e.g., 'README.md', 'src/main.py')"
+    },
+    required=["filepath"]
+)
 
 
 def read_file(filepath: str) -> str:

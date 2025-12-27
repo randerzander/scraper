@@ -16,29 +16,21 @@ import html2text
 from pyreadability import Readability
 from tools import retriever
 from pathlib import Path
+from utils import create_tool_spec
 
 
 logger = logging.getLogger(__name__)
 
 
 # Tool specification for agent registration
-TOOL_SPEC = {
-    "type": "function",
-    "function": {
-        "name": "read_url",
-        "description": "Read and extract content from any URL. Handles YouTube videos (returns transcript), Wikipedia articles (returns article content), and regular web pages (returns markdown). Use this for ALL URLs including YouTube videos, Wikipedia articles, documentation, blog posts, etc.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "url": {
-                    "type": "string",
-                    "description": "The URL to read (supports YouTube, Wikipedia, and any web page)"
-                }
-            },
-            "required": ["url"]
-        }
-    }
-}
+TOOL_SPEC = create_tool_spec(
+    name="read_url",
+    description="Read and extract content from any URL. Handles YouTube videos (returns transcript), Wikipedia articles (returns article content), and regular web pages (returns markdown). Use this for ALL URLs including YouTube videos, Wikipedia articles, documentation, blog posts, etc.",
+    parameters={
+        "url": "The URL to read (supports YouTube, Wikipedia, and any web page)"
+    },
+    required=["url"]
+)
 
 
 def read_url(url: str) -> str:

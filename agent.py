@@ -675,6 +675,15 @@ class ReActAgent:
                                     file_count = result_content.count("\n") - 2 if "\n" in result_content else 0
                                     pattern = function_args.get('pattern', 'all files')
                                     logger.info(f"Tool {function_name} completed - Pattern: '{pattern}', Files: {file_count}, Response time: {execution_time}s")
+                                elif function_name == "read_userinfo":
+                                    # Log username for read_userinfo
+                                    username = function_args.get('username', 'unknown')
+                                    logger.info(f"Tool {function_name} completed - User: {username}, returned {len(result_content)} characters, response time: {execution_time}s")
+                                elif function_name == "add_userinfo":
+                                    # Log username and info length for add_userinfo
+                                    username = function_args.get('username', 'unknown')
+                                    info = function_args.get('info', '')
+                                    logger.info(f"Tool {function_name} completed - User: {username}, stored {len(info)} characters, response time: {execution_time}s")
                                 elif not isinstance(result_content, str):
                                     result_content = str(result_content)
                                     logger.info(f"Tool {function_name} completed, returned {len(result_content)} characters, response time: {execution_time}s")
